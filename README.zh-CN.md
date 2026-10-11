@@ -12,6 +12,8 @@
 
 ## 快速开始
 
+**前置条件**：一个 Kubernetes 集群 + `kubectl` + `helm`，以及构建 operator 镜像用的 Docker（在公开镜像发布之前）。**全程不需要 Cloudflare 账号。**
+
 Helm 安装，再用一条 Ingress 暴露 demo nginx：
 
 ```console
@@ -96,6 +98,20 @@ operator 直接跑在本机、对当前 kubeconfig 生效，免打镜像：
 $ make build
 $ ./bin/cloudflare-quick-tunnel-operator
 ```
+
+## 配置
+
+operator 的 CLI flags 及对应的 Helm value：
+
+| CLI flag | Helm value | 默认值 | 说明 |
+|---|---|---|---|
+| `--cloudflared-image` | `cloudflaredImage` | `cloudflare/cloudflared:2026.10.0` | 隧道 Pod 使用的 cloudflared 镜像 |
+| `--metrics-bind-address` | `metrics.bindAddress` | `:8080` | operator 的 Prometheus metrics 端点 |
+| `--health-probe-bind-address` | `health.bindAddress` | `:8081` | healthz / readyz 端点 |
+| `--namespace` | `namespaceScope` | `""`（全部 namespace） | 将 reconcile 限制在单个 namespace |
+| `--leader-elect` | `leaderElection` | `false`（chart/manifest 里为 `true`） | 多副本安全运行 |
+
+controller-runtime zap 包的日志 flags（`--zap-log-level`、`--zap-encoder` 等）同样可用。
 
 ## 使用
 
@@ -217,7 +233,11 @@ quiet-marble-otter.trycloudflare.com    # Hostname 不带 scheme，访问时加 
 - **无 SLA**：Cloudflare 可能掐掉空闲隧道；本 operator 通过探活 + 自动重建缓解，但这是 best-effort。
 - 所有流量经过 Cloudflare 边缘，注意隐私与合规。
 
-要稳定域名和生产流量，请换命名隧道（需要账号）：官方 `cloudflared` 或 [STRRL/cloudflare-tunnel-ingress-controller](https://github.com/STRRL/cloudflare-tunnel-ingress-controller)。
+## 同类项目
+
+- **稳定域名 / 生产流量**：[STRRL/cloudflare-tunnel-ingress-controller](https://github.com/STRRL/cloudflare-tunnel-ingress-controller)——基于*命名* Cloudflare Tunnel 的 Ingress controller；需要账号、Cloudflare 域名和 API token，但能给固定域名、隧道支持多副本。官方 `cloudflared` 也可用。
+- **CRD 方式管理隧道**：[adyanth/cloudflare-operator](https://github.com/adyanth/cloudflare-operator) 通过 `Tunnel` CRD 管理 Cloudflare Tunnel。
+- **私有暴露（仅 tailnet）**：[Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-operator/) 把 Service 和 Ingress 暴露给你的 tailnet 而不是公网。
 
 ## 开发
 
@@ -235,6 +255,7 @@ $ make vet
 - [x] Ingress 支持（`ingressClassName: quicktunnel`，按 host 拆分多隧道，status.loadBalancer 聚合 URL）
 - [x] Helm chart
 - [ ] operator 自身 metrics（暴露中的隧道数、URL 更新计数）
+- [ ] 通过 CI 把镜像和 Helm chart 发布到公共 registry（GHCR / OCI）
 
 ## License
 

@@ -12,6 +12,10 @@ Expose Kubernetes Services to the public internet via **Cloudflare Quick Tunnels
 
 ## Quick start
 
+**Prerequisites**: a Kubernetes cluster with `kubectl` and `helm`, plus Docker
+to build the operator image (until a public image is published). No Cloudflare
+account is needed — ever.
+
 Install with Helm, then expose a demo nginx through an Ingress:
 
 ```console
@@ -102,6 +106,21 @@ needed:
 $ make build
 $ ./bin/cloudflare-quick-tunnel-operator
 ```
+
+## Configuration
+
+Operator CLI flags and their Helm value equivalents:
+
+| CLI flag | Helm value | Default | Description |
+|---|---|---|---|
+| `--cloudflared-image` | `cloudflaredImage` | `cloudflare/cloudflared:2026.10.0` | cloudflared image used for tunnel pods |
+| `--metrics-bind-address` | `metrics.bindAddress` | `:8080` | Prometheus metrics endpoint of the operator |
+| `--health-probe-bind-address` | `health.bindAddress` | `:8081` | healthz / readyz endpoint |
+| `--namespace` | `namespaceScope` | `""` (all namespaces) | restrict reconciliation to one namespace |
+| `--leader-elect` | `leaderElection` | `false` (chart/manifest: `true`) | safe multi-replica operation |
+
+Logging flags from controller-runtime's zap package (`--zap-log-level`,
+`--zap-encoder`, …) are also available.
 
 ## Usage
 
@@ -226,7 +245,11 @@ path matches are not honored (same single-origin reasoning as Ingress).
 - **No SLA**: Cloudflare may drop idle tunnels. The operator mitigates this with probing and automatic rebuilds, but it remains best-effort.
 - All traffic traverses Cloudflare's edge — consider privacy and compliance.
 
-For stable hostnames and production traffic, switch to named tunnels (requires an account): official `cloudflared`, or [STRRL/cloudflare-tunnel-ingress-controller](https://github.com/STRRL/cloudflare-tunnel-ingress-controller).
+## Alternatives
+
+- **Stable hostnames / production traffic**: [STRRL/cloudflare-tunnel-ingress-controller](https://github.com/STRRL/cloudflare-tunnel-ingress-controller) — Ingress controller over *named* Cloudflare Tunnels; needs an account, a Cloudflare domain and an API token, but gives fixed hostnames and multi-replica tunnels. Plain `cloudflared` also works.
+- **CRD-based tunnel management**: [adyanth/cloudflare-operator](https://github.com/adyanth/cloudflare-operator) manages Cloudflare Tunnels through a `Tunnel` CRD.
+- **Private exposure (tailnet-only)**: the [Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-operator/) exposes Services and Ingresses to your tailnet instead of the public internet.
 
 ## Development
 
@@ -244,6 +267,7 @@ $ make vet
 - [x] Ingress support (`ingressClassName: quicktunnel`, one tunnel per host, status.loadBalancer aggregates URLs)
 - [x] Helm chart
 - [ ] Operator metrics (tunnels exposed, URL update counts)
+- [ ] Publish images and the Helm chart to a public registry (GHCR / OCI) via CI
 
 ## License
 
