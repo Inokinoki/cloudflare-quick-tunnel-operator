@@ -2,6 +2,10 @@
 
 把 Kubernetes 集群里的 Service 通过 **Cloudflare Quick Tunnel**（`trycloudflare.com`）暴露到公网——**不需要 Cloudflare 账号、不需要域名、不需要公网 IP、不需要开任何入站端口**。
 
+> 📖 完整的安装与使用教程见 **[docs/tutorial.md](docs/tutorial.md)**（三种暴露方式、运维命令、排障速查、卸载）。
+
+支持三种暴露方式：Service annotation（最简）、Ingress（`ingressClassName: quicktunnel`，按 host 拆隧道）、Gateway API（`gatewayClassName: quicktunnel`）。
+
 给 Service 打一个 annotation，几秒钟后 operator 会把公网 URL 写回来：
 
 ```yaml
