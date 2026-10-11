@@ -13,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -24,11 +23,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// TunnelManager covers the background per-owner loop that harvests the quick
-// tunnel URL from the tunnel pod's logs and probes tunnel health.
+// TunnelManager covers the background per-tunnel loop that harvests the
+// quick tunnel URL from the tunnel pod's logs and probes tunnel health.
 type TunnelManager interface {
 	Ensure(ctx context.Context, owner OwnerRef, originURL string)
-	Stop(key types.NamespacedName)
+	Stop(owner OwnerRef)
+	StopAll(namespace, name string)
 }
 
 // requeuePeriod re-asserts the watchdog goroutine periodically; Ensure is
@@ -77,7 +77,7 @@ func teardownTunnelDeployment(ctx context.Context, c client.Client, owner OwnerR
 var one int32 = 1
 
 func buildTunnelDeployment(image string, owner OwnerRef, origin string) *appsv1.Deployment {
-	labels := owner.Labels()
+	labels := owner.TunnelLabels()
 	args := []string{
 		"tunnel",
 		"--no-autoupdate",
@@ -93,6 +93,8 @@ func buildTunnelDeployment(image string, owner OwnerRef, origin string) *appsv1.
 			Name:      DeploymentName(owner),
 			Namespace: owner.Namespace,
 			Labels:    labels,
+			// Raw group for lossless teardown; labels are charset-limited.
+			Annotations: map[string]string{AnnTunnelGroup: owner.Group},
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &one,
@@ -171,7 +173,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	svc := &corev1.Service{}
 	if err := r.Get(ctx, req.NamespacedName, svc); err != nil {
 		if apierrors.IsNotFound(err) {
-			r.Watchdog.Stop(req.NamespacedName)
+			r.Watchdog.StopAll(req.Namespace, req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -180,7 +182,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	owner := OwnerRef{Kind: "Service", Namespace: svc.Namespace, Name: svc.Name}
 
 	if !IsExposed(svc) {
-		r.Watchdog.Stop(owner.Key())
+		r.Watchdog.Stop(owner)
 		if err := teardownTunnelDeployment(ctx, r.Client, owner); err != nil {
 			return ctrl.Result{}, err
 		}

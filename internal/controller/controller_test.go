@@ -16,23 +16,29 @@ import (
 )
 
 type fakeManager struct {
-	ensured map[types.NamespacedName]string
-	stopped map[types.NamespacedName]int
+	ensured    map[string]string
+	stopped    map[string]int
+	stoppedAll map[string]int
 }
 
 func newFakeManager() *fakeManager {
 	return &fakeManager{
-		ensured: map[types.NamespacedName]string{},
-		stopped: map[types.NamespacedName]int{},
+		ensured:    map[string]string{},
+		stopped:    map[string]int{},
+		stoppedAll: map[string]int{},
 	}
 }
 
 func (f *fakeManager) Ensure(_ context.Context, owner OwnerRef, originURL string) {
-	f.ensured[owner.Key()] = originURL
+	f.ensured[loopKey(owner)] = originURL
 }
 
-func (f *fakeManager) Stop(key types.NamespacedName) {
-	f.stopped[key]++
+func (f *fakeManager) Stop(owner OwnerRef) {
+	f.stopped[loopKey(owner)]++
+}
+
+func (f *fakeManager) StopAll(namespace, name string) {
+	f.stoppedAll[namespace+"/"+name]++
 }
 
 func testService(annotations map[string]string) *corev1.Service {
@@ -94,8 +100,8 @@ func TestReconcileCreatesDeployment(t *testing.T) {
 	if !found {
 		t.Fatalf("--url %q not found in args %v", want, args)
 	}
-	if fm.ensured[types.NamespacedName{Namespace: "default", Name: "demo"}] != want {
-		t.Fatalf("watchdog not ensured with origin %q, got %q", want, fm.ensured[types.NamespacedName{Namespace: "default", Name: "demo"}])
+	if fm.ensured[loopKey(OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"})] != want {
+		t.Fatalf("watchdog not ensured with origin %q, got %q", want, fm.ensured[loopKey(OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"})])
 	}
 }
 
@@ -172,7 +178,7 @@ func TestReconcileTeardownOnOptOut(t *testing.T) {
 	if _, ok := fresh.Annotations[AnnURL]; ok {
 		t.Fatal("quicktunnel.dev/url annotation not cleaned up")
 	}
-	if fm.stopped[key] == 0 {
+	if fm.stopped[loopKey(OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"})] == 0 {
 		t.Fatal("watchdog not stopped")
 	}
 }
@@ -185,7 +191,7 @@ func TestReconcileStopsWatchdogOnServiceDelete(t *testing.T) {
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
 		t.Fatal(err)
 	}
-	if fm.stopped[key] == 0 {
+	if fm.stoppedAll["gone/svc"] == 0 {
 		t.Fatal("watchdog not stopped for deleted Service")
 	}
 }

@@ -122,6 +122,50 @@ quiet-marble-otter.trycloudflare.com    # Hostname 类型不带 scheme，访问�
 
 完整示例见 `examples/gateway-demo.yaml`。若集群未装 Gateway API CRDs，operator 会跳过 Gateway API 支持并打日志提示，Service annotation 模式不受影响。
 
+## Ingress 支持
+
+传统 Ingress 也支持（`deploy/install.yaml` 自带 `IngressClass quicktunnel`）。映射关系：
+
+- **按 host 拆分隧道**：Ingress 规则按 host 分组，每个 host 一条独立隧道（URL 各自独立）；无 host 的规则共用一条，`defaultBackend` 兜底；
+- 每个 host 组取**第一条规则第一个 Service backend**（path 级路由无法支持，单 origin 限制）；
+- URL 写到 Ingress 的 `quicktunnel.dev/url.<host>` annotation（无 host 组用裸 `quicktunnel.dev/url`），并聚合进 **`status.loadBalancer.ingress`**（external-dns 等标准工具读这里，Hostname 不带 scheme）；
+- trycloudflare.com 的随机域名**无法真正 serve 规则里的自定义 host**——host 只作为分组和拆隧道的维度。
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo
+spec:
+  ingressClassName: quicktunnel
+  rules:
+    - host: web.demo.local        # → 一条隧道 + quicktunnel.dev/url.web.demo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-nginx
+                port: { number: 80 }
+    - host: api.demo.local        # → 另一条隧道 + quicktunnel.dev/url.api.demo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-echo
+                port: { number: 5678 }
+```
+
+```console
+$ kubectl get ingress demo -o jsonpath='{.status.loadBalancer.ingress[*].hostname}'
+api-xxx.trycloudflare.com web-yyy.trycloudflare.com
+```
+
+完整示例 `examples/ingress-demo.yaml`。
+
 ## 已知限制（来自 Quick Tunnel 本身）
 
 - **URL 与 Pod 生命周期绑定**：tunnel Pod 重启后域名必然变化，annotation 会自动更新，但任何把 URL 固化到配置里的用法都会失效。
@@ -145,8 +189,7 @@ $ make vet
 ## Roadmap
 
 - [x] Gateway API 支持（`gatewayClassName: quicktunnel`，HTTPRoute = 隧道，Gateway.status.addresses 聚合 URL）
-- [x] 事件（Event）上报 URL 变更前的探活/回收日志（operator 日志）
-- [ ] Ingress 支持（`ingressClassName: quicktunnel`，按 host 拆分多隧道）
+- [x] Ingress 支持（`ingressClassName: quicktunnel`，按 host 拆分多隧道，status.loadBalancer 聚合 URL）
 - [ ] operator 自身 metrics（暴露中的隧道数、URL 更新计数）
 
 ## License

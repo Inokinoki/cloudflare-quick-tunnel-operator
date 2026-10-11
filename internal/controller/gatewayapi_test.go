@@ -146,7 +146,7 @@ func TestHTTPRouteCreatesTunnel(t *testing.T) {
 	want := "http://demo-nginx.default.svc.cluster.local:80"
 	args := getTunnelArgs(t, c, "default", DeploymentName(OwnerRef{Kind: "HTTPRoute", Namespace: "default", Name: "demo"}))
 	assertContains(t, args, want)
-	if got := fm.ensured[types.NamespacedName{Namespace: "default", Name: "demo"}]; got != want {
+	if got := fm.ensured[loopKey(OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"})]; got != want {
 		t.Fatalf("watchdog ensured %q, want %q", got, want)
 	}
 

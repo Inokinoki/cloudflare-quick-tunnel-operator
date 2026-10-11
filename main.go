@@ -81,6 +81,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	ingRec := &controller.IngressReconciler{
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		CloudflaredImage: cloudflaredImage,
+		Watchdog:         reconciler.Watchdog,
+	}
+	if err := ingRec.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create Ingress controller")
+		os.Exit(1)
+	}
+
 	if gatewayAPIAvailable(mgr.GetConfig()) {
 		gcRec := &controller.GatewayClassReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}
 		gwRec := &controller.GatewayReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}

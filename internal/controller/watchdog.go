@@ -15,9 +15,9 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	nwv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -107,10 +107,11 @@ func defaultTunables() Tunables {
 	}
 }
 
-// TunnelWatchdog owns one background goroutine per exposed Service. The loop
-// harvests the quick tunnel URL from tunnel pod logs, publishes it to the
-// Service annotations, and recycles the pod when the tunnel wedges. Pod
-// identity is re-resolved on every probe so deployment rollouts are followed.
+// TunnelWatchdog owns one background goroutine per tunnel (one per exposed
+// owner, or one per Ingress host rule). The loop harvests the quick tunnel
+// URL from tunnel pod logs, publishes it to the owner's annotations, and
+// recycles the pod when the tunnel wedges. Pod identity is re-resolved on
+// every probe so deployment rollouts are followed.
 type TunnelWatchdog struct {
 	client  client.Client
 	logs    podLogReader
@@ -118,7 +119,11 @@ type TunnelWatchdog struct {
 	t       Tunables
 
 	mu    sync.Mutex
-	loops map[types.NamespacedName]*tunnelLoop
+	loops map[string]*tunnelLoop
+}
+
+func loopKey(o OwnerRef) string {
+	return o.Namespace + "/" + o.Name + "/" + o.Group
 }
 
 func NewTunnelWatchdog(c client.Client, core kubernetes.Interface) *TunnelWatchdog {
@@ -127,12 +132,12 @@ func NewTunnelWatchdog(c client.Client, core kubernetes.Interface) *TunnelWatchd
 		logs:    kubeLogReader{core: core},
 		metrics: apiProxyMetricsReader{core: core},
 		t:       defaultTunables(),
-		loops:   map[types.NamespacedName]*tunnelLoop{},
+		loops:   map[string]*tunnelLoop{},
 	}
 }
 
 func (w *TunnelWatchdog) Ensure(ctx context.Context, owner OwnerRef, originURL string) {
-	key := owner.Key()
+	key := loopKey(owner)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if lp, ok := w.loops[key]; ok {
@@ -156,16 +161,29 @@ func (w *TunnelWatchdog) Ensure(ctx context.Context, owner OwnerRef, originURL s
 	}()
 }
 
-func (w *TunnelWatchdog) Stop(key types.NamespacedName) {
+// Stop terminates the exact tunnel group of the owner.
+func (w *TunnelWatchdog) Stop(owner OwnerRef) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if lp, ok := w.loops[key]; ok {
+	if lp, ok := w.loops[loopKey(owner)]; ok {
 		lp.cancel()
-		delete(w.loops, key)
+		delete(w.loops, loopKey(owner))
 	}
 }
 
-func (w *TunnelWatchdog) forget(key types.NamespacedName, lp *tunnelLoop) {
+// StopAll terminates every tunnel group owned by the object.
+func (w *TunnelWatchdog) StopAll(namespace, name string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for key, lp := range w.loops {
+		if lp.owner.Namespace == namespace && lp.owner.Name == name {
+			lp.cancel()
+			delete(w.loops, key)
+		}
+	}
+}
+
+func (w *TunnelWatchdog) forget(key string, lp *tunnelLoop) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if cur, ok := w.loops[key]; ok && cur == lp {
@@ -220,7 +238,7 @@ func (lp *tunnelLoop) listPods(ctx context.Context) ([]corev1.Pod, error) {
 	list := &corev1.PodList{}
 	err := lp.wd.client.List(ctx, list,
 		client.InNamespace(lp.owner.Namespace),
-		client.MatchingLabels(lp.owner.Labels()))
+		client.MatchingLabels(lp.owner.TunnelLabels()))
 	if err != nil {
 		return nil, err
 	}
@@ -258,6 +276,8 @@ func (lp *tunnelLoop) publish(ctx context.Context, url string) {
 	switch lp.owner.Kind {
 	case "HTTPRoute":
 		obj = &gwv1.HTTPRoute{}
+	case "Ingress":
+		obj = &nwv1.Ingress{}
 	default:
 		obj = &corev1.Service{}
 	}
@@ -274,14 +294,16 @@ func (lp *tunnelLoop) publish(ctx context.Context, url string) {
 	if err != nil {
 		return
 	}
-	if acc.GetAnnotations()[AnnURL] == url {
+	urlKey := annURLKey(lp.owner.Group)
+	updatedKey := annUpdatedKey(lp.owner.Group)
+	if acc.GetAnnotations()[urlKey] == url {
 		return
 	}
 	if acc.GetAnnotations() == nil {
 		acc.SetAnnotations(map[string]string{})
 	}
-	acc.GetAnnotations()[AnnURL] = url
-	acc.GetAnnotations()[AnnURLUpdated] = time.Now().UTC().Format(time.RFC3339)
+	acc.GetAnnotations()[urlKey] = url
+	acc.GetAnnotations()[updatedKey] = time.Now().UTC().Format(time.RFC3339)
 	if err := lp.wd.client.Patch(ctx, obj, client.MergeFrom(base)); err != nil {
 		lp.logger().Error(err, "failed to publish tunnel URL", "url", url)
 	}

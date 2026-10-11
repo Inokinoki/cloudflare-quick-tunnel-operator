@@ -115,7 +115,7 @@ func newWatchdogForTest(c client.Client, logs podLogReader, metrics metricsReade
 		client:  c,
 		logs:    logs,
 		metrics: metrics,
-		loops:   map[types.NamespacedName]*tunnelLoop{},
+		loops:   map[string]*tunnelLoop{},
 		t: Tunables{
 			PollInterval:    5 * time.Millisecond,
 			HarvestTimeout:  500 * time.Millisecond,
@@ -161,7 +161,7 @@ func TestWatchdogPublishesURLAndRecyclesZombie(t *testing.T) {
 	w := newWatchdogForTest(c, logs, metrics)
 
 	w.Ensure(ctx, OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"}, "http://demo.default.svc.cluster.local:80")
-	defer w.Stop(types.NamespacedName{Namespace: "default", Name: "demo"})
+	defer w.StopAll("default", "demo")
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -209,7 +209,7 @@ func TestWatchdogHarvestTimeoutRecyclesPod(t *testing.T) {
 	metrics := &fakeMetrics{ha: 4}
 	w := newWatchdogForTest(c, logs, metrics)
 	w.Ensure(ctx, OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"}, "http://demo.default.svc.cluster.local:80")
-	defer w.Stop(types.NamespacedName{Namespace: "default", Name: "demo"})
+	defer w.StopAll("default", "demo")
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {

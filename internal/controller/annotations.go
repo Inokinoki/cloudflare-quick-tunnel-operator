@@ -26,6 +26,12 @@ const (
 	LabelOwnerKind        = "quicktunnel.dev/owner-kind"
 	LabelOwnerNamespace   = "quicktunnel.dev/owner-namespace"
 	LabelOwnerName        = "quicktunnel.dev/owner-name"
+	LabelTunnelGroup      = "quicktunnel.dev/tunnel-group"
+
+	// AnnTunnelGroup stores the RAW tunnel group (e.g. the Ingress host) on
+	// tunnel deployments. The label value is charset-limited and lossy; this
+	// annotation is what teardown uses to recover the watchdog key.
+	AnnTunnelGroup = "quicktunnel.dev/tunnel-group"
 
 	DefaultCloudflaredImage = "cloudflare/cloudflared:2026.10.0"
 
@@ -58,17 +64,22 @@ func OriginURL(svc *corev1.Service) string {
 }
 
 // OwnerRef identifies the object a tunnel belongs to: a Service exposed via
-// annotation, or an HTTPRoute attached to a quicktunnel Gateway.
+// annotation, an HTTPRoute attached to a quicktunnel Gateway, or an Ingress
+// with ingressClassName quicktunnel. Group distinguishes multiple tunnels
+// owned by one object — Ingress runs one tunnel per host rule, with ""
+// meaning the hostless/default tunnel.
 type OwnerRef struct {
-	Kind      string // "Service" or "HTTPRoute"
+	Kind      string // "Service", "HTTPRoute" or "Ingress"
 	Namespace string
 	Name      string
+	Group     string
 }
 
 func (o OwnerRef) Key() types.NamespacedName {
 	return types.NamespacedName{Namespace: o.Namespace, Name: o.Name}
 }
 
+// Labels select every tunnel of the owner, regardless of group.
 func (o OwnerRef) Labels() map[string]string {
 	return map[string]string{
 		ManagedByLabel:      ManagedByValue,
@@ -78,19 +89,64 @@ func (o OwnerRef) Labels() map[string]string {
 	}
 }
 
+// TunnelLabels additionally pin the tunnel group; used on deployments, their
+// pods, and for pod selection in the watchdog.
+func (o OwnerRef) TunnelLabels() map[string]string {
+	labels := o.Labels()
+	if o.Group != "" {
+		labels[LabelTunnelGroup] = LabelValue(o.Group)
+	}
+	return labels
+}
+
 // DeploymentName derives a stable, DNS-1123-safe name for the tunnel
 // Deployment of an owner. Long names are shortened with a hash suffix.
 func DeploymentName(owner OwnerRef) string {
 	prefix := "qt-"
-	if owner.Kind == "HTTPRoute" {
+	switch owner.Kind {
+	case "HTTPRoute":
 		prefix = "qt-hr-"
+	case "Ingress":
+		prefix = "qt-ing-"
 	}
 	base := sanitizeDNS(prefix + owner.Namespace + "-" + owner.Name)
+	if owner.Group != "" {
+		sum := sha256.Sum256([]byte(owner.Group))
+		base += "-" + hex.EncodeToString(sum[:])[:8]
+	}
 	if len(base) <= 63 {
 		return base
 	}
-	sum := sha256.Sum256([]byte(owner.Kind + "/" + owner.Namespace + "/" + owner.Name))
+	sum := sha256.Sum256([]byte(owner.Kind + "/" + owner.Namespace + "/" + owner.Name + "/" + owner.Group))
 	return base[:52] + "-" + hex.EncodeToString(sum[:])[:10]
+}
+
+// LabelValue turns an arbitrary string (e.g. a hostname) into a valid label
+// value, hash-shortening when it exceeds 63 characters.
+func LabelValue(s string) string {
+	v := sanitizeDNS(s)
+	if len(v) <= 63 {
+		return v
+	}
+	sum := sha256.Sum256([]byte(s))
+	return v[:47] + "-" + hex.EncodeToString(sum[:])[:15]
+}
+
+// annURLKey returns the annotation a tunnel URL is published under: the bare
+// quicktunnel.dev/url for groupless tunnels, quicktunnel.dev/url.<host> for
+// a grouped (Ingress host rule) tunnel.
+func annURLKey(group string) string {
+	if group == "" {
+		return AnnURL
+	}
+	return AnnURL + "." + group
+}
+
+func annUpdatedKey(group string) string {
+	if group == "" {
+		return AnnURLUpdated
+	}
+	return AnnURLUpdated + "." + group
 }
 
 func sanitizeDNS(s string) string {

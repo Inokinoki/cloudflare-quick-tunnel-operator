@@ -135,7 +135,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	route := &gwv1.HTTPRoute{}
 	if err := r.Get(ctx, req.NamespacedName, route); err != nil {
 		if apierrors.IsNotFound(err) {
-			r.Watchdog.Stop(req.NamespacedName)
+			r.Watchdog.StopAll(req.Namespace, req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -145,7 +145,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	gw := r.attachedGateway(ctx, route)
 
 	if route.DeletionTimestamp != nil || gw == nil {
-		r.Watchdog.Stop(owner.Key())
+		r.Watchdog.Stop(owner)
 		if err := teardownTunnelDeployment(ctx, r.Client, owner); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -168,7 +168,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// Most commonly a race: the route reconciles before its backend
 		// Service has reached our cache. Tear down any stale tunnel and
 		// retry rather than treating this as terminal.
-		r.Watchdog.Stop(owner.Key())
+		r.Watchdog.Stop(owner)
 		if tdErr := teardownTunnelDeployment(ctx, r.Client, owner); tdErr != nil {
 			return ctrl.Result{}, tdErr
 		}
