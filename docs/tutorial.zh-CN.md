@@ -46,6 +46,26 @@ $ kubectl -n cloudflare-quick-tunnel-operator wait deploy/cloudflare-quick-tunne
 
 minikube 用户如果没装独立 kubectl，可以 `KUBECTL="minikube kubectl --" make deploy`。
 
+### 方式 C：Helm
+
+```console
+# 先构建镜像（尚无公开镜像），加载进集群或推到 registry：
+$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev
+
+$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+    -n cloudflare-quick-tunnel-operator --create-namespace
+
+# 使用 registry 镜像：
+$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+    -n cloudflare-quick-tunnel-operator --create-namespace \
+    --set image.repository=ghcr.io/<你的用户名>/cloudflare-quick-tunnel-operator \
+    --set image.tag=v0.1.0
+```
+
+Chart 包含 operator Deployment、RBAC（含 leader election 的 lease 权限）、`quicktunnel` IngressClass 和 GatewayClass。可调项见 `charts/cloudflare-quick-tunnel-operator/values.yaml`。卸载：`helm uninstall cloudflare-quick-tunnel-operator -n cloudflare-quick-tunnel-operator`。
+
+> 从 `deploy/install.yaml` 迁移到 Helm？先删除已创建的 `IngressClass quicktunnel` / `GatewayClass quicktunnel`——Helm 拒绝收编不属于它的存量资源。
+
 ### 1.1 远程/云集群安装（需要推镜像到 registry）
 
 远程集群没法 side-load 镜像，把构建好的镜像推到集群能拉取的 registry（Docker Hub / GHCR / 私有 registry），然后改一下 `deploy/install.yaml` 里的 `image:` 即可：

@@ -1,0 +1,67 @@
+# Default values for cloudflare-quick-tunnel-operator.
+
+replicaCount: 1
+
+image:
+  # No public image is published yet — build and load/push your own, e.g.:
+  #   make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev
+  #   or push to a registry: ghcr.io/<you>/cloudflare-quick-tunnel-operator:v0.1.0
+  repository: cloudflare-quick-tunnel-operator
+  tag: dev
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  # Set to override the auto-generated service account name
+  name: ""
+
+rbac:
+  create: true
+
+# Only one replica may run the reconcile loop; leader election makes
+# multi-replica deployments safe.
+leaderElection: true
+
+# cloudflared image used for the per-tunnel pods
+cloudflaredImage: cloudflare/cloudflared:2026.10.0
+
+# Restrict reconciliation to one namespace (empty = all namespaces)
+namespaceScope: ""
+
+metrics:
+  bindAddress: ":8080"
+
+health:
+  bindAddress: ":8081"
+
+ingressClass:
+  create: true
+  name: quicktunnel
+
+gatewayClass:
+  create: true
+  name: quicktunnel
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 48Mi
+  limits:
+    memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}

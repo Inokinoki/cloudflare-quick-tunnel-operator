@@ -73,6 +73,31 @@ metadata:
 spec:
   controller: quicktunnel.dev/ingress
 ---
+# Leader election lease, scoped to the operator's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cloudflare-quick-tunnel-operator-leader-election
+  namespace: cloudflare-quick-tunnel-operator
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cloudflare-quick-tunnel-operator-leader-election
+  namespace: cloudflare-quick-tunnel-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cloudflare-quick-tunnel-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: cloudflare-quick-tunnel-operator
+    namespace: cloudflare-quick-tunnel-operator
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

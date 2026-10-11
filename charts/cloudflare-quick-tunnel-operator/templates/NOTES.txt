@@ -1,0 +1,22 @@
+Thank you for installing {{ .Chart.Name }}.
+
+Your release is named {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+The operator is ready when:
+  kubectl -n {{ .Release.Namespace }} wait deploy/{{ include "cjqto.fullname" . }} --for=condition=Available --timeout=90s
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "cjqto.fullname" . }} | head -5
+
+Expose a Service with a single annotation:
+  kubectl annotate svc my-svc quicktunnel.dev/expose=true
+  kubectl get svc my-svc -o jsonpath='{.metadata.annotations.quicktunnel\.dev/url}'
+
+Ingress mode (one tunnel per host; IngressClass "{{ .Values.ingressClass.name }}"{{ if not .Values.ingressClass.create }} is NOT installed by this release{{ end }}):
+  kubectl apply -f https://raw.githubusercontent.com/Inokinoki/cloudflare-quick-tunnel-operator/main/examples/demo.yaml
+
+Gateway API mode (GatewayClass "{{ .Values.gatewayClass.name }}"{{ if not .Values.gatewayClass.create }} is NOT installed by this release{{ end }}) needs the CRDs first:
+  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
+
+Full tutorial: https://github.com/Inokinoki/cloudflare-quick-tunnel-operator/blob/main/docs/tutorial.md
+
+Remember: quick tunnel URLs change whenever a tunnel pod restarts — always
+read them dynamically, never hard-code them.

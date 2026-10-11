@@ -1,0 +1,10 @@
+{{- if .Values.ingressClass.create }}
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: {{ .Values.ingressClass.name }}
+  labels:
+    {{- include "cjqto.labels" . | nindent 4 }}
+spec:
+  controller: quicktunnel.dev/ingress
+{{- end }}

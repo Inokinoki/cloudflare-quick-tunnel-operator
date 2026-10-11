@@ -46,6 +46,32 @@ $ kubectl -n cloudflare-quick-tunnel-operator wait deploy/cloudflare-quick-tunne
 
 minikube users without a standalone kubectl can use `KUBECTL="minikube kubectl --" make deploy`.
 
+### Option C: Helm
+
+```console
+# Build the image first (no public image is published yet), then load it
+# into the cluster or push it to a registry:
+$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev
+
+$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+    -n cloudflare-quick-tunnel-operator --create-namespace
+
+# With a registry image:
+$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+    -n cloudflare-quick-tunnel-operator --create-namespace \
+    --set image.repository=ghcr.io/<you>/cloudflare-quick-tunnel-operator \
+    --set image.tag=v0.1.0
+```
+
+The chart ships the operator Deployment, RBAC (including leader-election
+leases), the `quicktunnel` IngressClass and GatewayClass. Toggles and
+defaults are documented in `charts/cloudflare-quick-tunnel-operator/values.yaml`.
+Uninstall: `helm uninstall cloudflare-quick-tunnel-operator -n cloudflare-quick-tunnel-operator`.
+
+> Migrating from `deploy/install.yaml`? Delete the previously created
+> `IngressClass quicktunnel` / `GatewayClass quicktunnel` first — Helm
+> refuses to adopt resources it does not own.
+
 ### 1.1 Remote / cloud clusters (push the image to a registry)
 
 Remote clusters cannot side-load images. Push the built image to a registry the cluster can pull from (Docker Hub / GHCR / private), then point `deploy/install.yaml`'s `image:` at it:

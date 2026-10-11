@@ -80,6 +80,13 @@ $ make minikube-load          # docker build + minikube image load
 $ make deploy                 # kubectl apply -f deploy/install.yaml
 ```
 
+or with Helm:
+
+```console
+$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+    -n cloudflare-quick-tunnel-operator --create-namespace
+```
+
 minikube users without a standalone kubectl can use `KUBECTL="minikube kubectl --" make deploy`.
 
 ## Gateway API support

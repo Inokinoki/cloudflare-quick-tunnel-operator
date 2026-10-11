@@ -1,0 +1,26 @@
+apiVersion: v2
+name: cloudflare-quick-tunnel-operator
+description: >-
+  Expose Kubernetes Services to the public internet via Cloudflare Quick
+  Tunnels (trycloudflare.com) — no Cloudflare account, no domain, no public
+  IP, no inbound ports. Supports Service annotations, Ingress (one tunnel
+  per host) and Gateway API.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/Inokinoki/cloudflare-quick-tunnel-operator
+sources:
+  - https://github.com/Inokinoki/cloudflare-quick-tunnel-operator
+keywords:
+  - kubernetes
+  - operator
+  - ingress
+  - gateway-api
+  - cloudflare
+  - tunnel
+kubeVersion: ">=1.25.0-0"
+annotations:
+  artifacthub.io/license: MIT
+  artifacthub.io/links: |
+    - name: Tutorial
+      url: https://github.com/Inokinoki/cloudflare-quick-tunnel-operator/blob/main/docs/tutorial.md
