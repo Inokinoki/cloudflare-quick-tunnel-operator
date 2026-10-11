@@ -1,0 +1,88 @@
+# All-in-one installation for quicktunnel-operator.
+# Requires an image named quicktunnel-operator:dev loaded into the cluster
+# (e.g. `make minikube-load`), or edit the image below.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quicktunnel-operator
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: quicktunnel-operator
+  namespace: quicktunnel-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: quicktunnel-operator
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: quicktunnel-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: quicktunnel-operator
+subjects:
+  - kind: ServiceAccount
+    name: quicktunnel-operator
+    namespace: quicktunnel-operator
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quicktunnel-operator
+  namespace: quicktunnel-operator
+  labels:
+    app.kubernetes.io/name: quicktunnel-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: quicktunnel-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: quicktunnel-operator
+    spec:
+      serviceAccountName: quicktunnel-operator
+      containers:
+        - name: manager
+          image: quicktunnel-operator:dev
+          args:
+            - --leader-elect
+          ports:
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              memory: 128Mi
