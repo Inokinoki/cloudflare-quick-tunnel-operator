@@ -24,91 +24,31 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// TunnelManager covers the background per-Service loop that harvests the
-// quick tunnel URL from the tunnel pod's logs and probes tunnel health.
+// TunnelManager covers the background per-owner loop that harvests the quick
+// tunnel URL from the tunnel pod's logs and probes tunnel health.
 type TunnelManager interface {
-	Ensure(ctx context.Context, svc *corev1.Service, originURL string)
+	Ensure(ctx context.Context, owner OwnerRef, originURL string)
 	Stop(key types.NamespacedName)
 }
 
-// ServiceReconciler watches Services annotated with quicktunnel.dev/expose
-// and maintains one cloudflared quick-tunnel Deployment per exposed Service.
-type ServiceReconciler struct {
-	client.Client
-	Scheme           *runtime.Scheme
-	CloudflaredImage string
-	Watchdog         TunnelManager
-}
-
 // requeuePeriod re-asserts the watchdog goroutine periodically; Ensure is
-// idempotent, so this only costs a few API reads per exposed Service.
+// idempotent, so this only costs a few API reads per exposed owner.
 const requeuePeriod = 5 * time.Minute
 
-func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Service{}, builder.WithPredicates(exposedPredicate())).
-		Owns(&appsv1.Deployment{}).
-		Named("quicktunnel").
-		Complete(r)
-}
+// ensureTunnelDeployment idempotently maintains the cloudflared Deployment
+// for an owner (Service or HTTPRoute). ownerObj receives the ownerReference.
+func ensureTunnelDeployment(ctx context.Context, c client.Client, scheme *runtime.Scheme,
+	image string, ownerObj client.Object, owner OwnerRef, origin string) error {
 
-func exposedPredicate() predicate.Predicate {
-	isExposed := func(o client.Object) bool {
-		svc, ok := o.(*corev1.Service)
-		return ok && IsExposed(svc)
-	}
-	return predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return isExposed(e.Object) },
-		UpdateFunc:  func(e event.UpdateEvent) bool { return isExposed(e.ObjectNew) || isExposed(e.ObjectOld) },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return isExposed(e.Object) },
-		GenericFunc: func(e event.GenericEvent) bool { return isExposed(e.Object) },
-	}
-}
-
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
-// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
-
-func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	svc := &corev1.Service{}
-	if err := r.Get(ctx, req.NamespacedName, svc); err != nil {
-		if apierrors.IsNotFound(err) {
-			r.Watchdog.Stop(req.NamespacedName)
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
-	if !IsExposed(svc) {
-		r.Watchdog.Stop(req.NamespacedName)
-		if err := r.teardown(ctx, svc); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
-	}
-
-	if err := r.ensureDeployment(ctx, svc); err != nil {
-		return ctrl.Result{}, err
-	}
-	origin := OriginURL(svc)
-	r.Watchdog.Ensure(ctx, svc, origin)
-	logger.Info("quick tunnel ensured", "origin", origin)
-	return ctrl.Result{RequeueAfter: requeuePeriod}, nil
-}
-
-func (r *ServiceReconciler) ensureDeployment(ctx context.Context, svc *corev1.Service) error {
-	desired := r.tunnelDeployment(svc)
+	desired := buildTunnelDeployment(image, owner, origin)
 
 	existing := &appsv1.Deployment{}
-	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+	err := c.Get(ctx, client.ObjectKeyFromObject(desired), existing)
 	if apierrors.IsNotFound(err) {
-		if err := controllerutil.SetControllerReference(svc, desired, r.Scheme); err != nil {
+		if err := controllerutil.SetControllerReference(ownerObj, desired, scheme); err != nil {
 			return err
 		}
-		return r.Create(ctx, desired)
+		return c.Create(ctx, desired)
 	}
 	if err != nil {
 		return err
@@ -122,35 +62,22 @@ func (r *ServiceReconciler) ensureDeployment(ctx context.Context, svc *corev1.Se
 		return nil
 	}
 	existing.Spec.Template.Spec.Containers = desired.Spec.Template.Spec.Containers
-	return r.Update(ctx, existing)
+	return c.Update(ctx, existing)
 }
 
-func (r *ServiceReconciler) teardown(ctx context.Context, svc *corev1.Service) error {
+// teardownTunnelDeployment removes the owner's tunnel Deployment if present.
+func teardownTunnelDeployment(ctx context.Context, c client.Client, owner OwnerRef) error {
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
-		Name:      DeploymentName(svc.Namespace, svc.Name),
-		Namespace: svc.Namespace,
+		Name:      DeploymentName(owner),
+		Namespace: owner.Namespace,
 	}}
-	if err := r.Delete(ctx, dep); client.IgnoreNotFound(err) != nil {
-		return err
-	}
-	if _, has := svc.Annotations[AnnURL]; !has {
-		return nil
-	}
-	base := svc.DeepCopy()
-	delete(svc.Annotations, AnnURL)
-	delete(svc.Annotations, AnnURLUpdated)
-	return r.Patch(ctx, svc, client.MergeFrom(base))
+	return client.IgnoreNotFound(c.Delete(ctx, dep))
 }
 
 var one int32 = 1
 
-func (r *ServiceReconciler) tunnelDeployment(svc *corev1.Service) *appsv1.Deployment {
-	origin := OriginURL(svc)
-	labels := map[string]string{
-		ManagedByLabel:        ManagedByValue,
-		LabelServiceNamespace: svc.Namespace,
-		LabelServiceName:      svc.Name,
-	}
+func buildTunnelDeployment(image string, owner OwnerRef, origin string) *appsv1.Deployment {
+	labels := owner.Labels()
 	args := []string{
 		"tunnel",
 		"--no-autoupdate",
@@ -163,8 +90,8 @@ func (r *ServiceReconciler) tunnelDeployment(svc *corev1.Service) *appsv1.Deploy
 	}
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      DeploymentName(svc.Namespace, svc.Name),
-			Namespace: svc.Namespace,
+			Name:      DeploymentName(owner),
+			Namespace: owner.Namespace,
 			Labels:    labels,
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -179,7 +106,7 @@ func (r *ServiceReconciler) tunnelDeployment(svc *corev1.Service) *appsv1.Deploy
 					TerminationGracePeriodSeconds: ptr.To(int64(10)),
 					Containers: []corev1.Container{{
 						Name:            "tunnel",
-						Image:           r.CloudflaredImage,
+						Image:           image,
 						Args:            args,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Ports: []corev1.ContainerPort{{
@@ -201,4 +128,76 @@ func (r *ServiceReconciler) tunnelDeployment(svc *corev1.Service) *appsv1.Deploy
 			},
 		},
 	}
+}
+
+// ServiceReconciler watches Services annotated with quicktunnel.dev/expose
+// and maintains one cloudflared quick-tunnel Deployment per exposed Service.
+type ServiceReconciler struct {
+	client.Client
+	Scheme           *runtime.Scheme
+	CloudflaredImage string
+	Watchdog         TunnelManager
+}
+
+func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&corev1.Service{}, builder.WithPredicates(exposedPredicate())).
+		Owns(&appsv1.Deployment{}).
+		Named("quicktunnel-service").
+		Complete(r)
+}
+
+func exposedPredicate() predicate.Predicate {
+	isExposed := func(o client.Object) bool {
+		svc, ok := o.(*corev1.Service)
+		return ok && IsExposed(svc)
+	}
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return isExposed(e.Object) },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return isExposed(e.ObjectNew) || isExposed(e.ObjectOld) },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return isExposed(e.Object) },
+		GenericFunc: func(e event.GenericEvent) bool { return isExposed(e.Object) },
+	}
+}
+
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups="",resources=pods/log;pods/proxy,verbs=get
+
+func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	svc := &corev1.Service{}
+	if err := r.Get(ctx, req.NamespacedName, svc); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.Watchdog.Stop(req.NamespacedName)
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	owner := OwnerRef{Kind: "Service", Namespace: svc.Namespace, Name: svc.Name}
+
+	if !IsExposed(svc) {
+		r.Watchdog.Stop(owner.Key())
+		if err := teardownTunnelDeployment(ctx, r.Client, owner); err != nil {
+			return ctrl.Result{}, err
+		}
+		if _, has := svc.Annotations[AnnURL]; has {
+			base := svc.DeepCopy()
+			delete(svc.Annotations, AnnURL)
+			delete(svc.Annotations, AnnURLUpdated)
+			return ctrl.Result{}, r.Patch(ctx, svc, client.MergeFrom(base))
+		}
+		return ctrl.Result{}, nil
+	}
+
+	if err := ensureTunnelDeployment(ctx, r.Client, r.Scheme, r.CloudflaredImage,
+		svc, owner, OriginURL(svc)); err != nil {
+		return ctrl.Result{}, err
+	}
+	r.Watchdog.Ensure(ctx, owner, OriginURL(svc))
+	logger.Info("quick tunnel ensured", "origin", OriginURL(svc))
+	return ctrl.Result{RequeueAfter: requeuePeriod}, nil
 }

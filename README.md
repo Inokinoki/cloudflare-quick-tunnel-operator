@@ -76,6 +76,52 @@ $ make deploy                 # kubectl apply -f deploy/install.yaml
 
 minikube 用户可以 `KUBECTL="minikube kubectl --" make deploy`。
 
+## Gateway API 支持
+
+除了 Service annotation，也支持标准 [Gateway API](https://gateway-api.sigs.k8s.io/)（需要先装 CRDs）：
+
+```console
+$ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
+```
+
+`deploy/install.yaml` 自带 `GatewayClass quicktunnel`（controllerName `quicktunnel.dev/gateway`）。映射关系：
+
+- **HTTPRoute = 一条隧道**：attach 到 quicktunnel Gateway 的每个 HTTPRoute，取其第一条规则的第一个 Service backendRef 建一条 tunnel，URL 写到 route 的 `quicktunnel.dev/url` annotation 和 route status（Accepted / ResolvedRefs）；
+- **Gateway = URL 聚合器**：其下所有 route 的 URL 汇总进 `status.addresses`，有 URL 后 Programmed 变 True——这是读地址的"官方"位置；
+- **hostnames / path 匹配不生效**：trycloudflare.com 域名是随机分配的，无法承诺自定义主机名；多条 rule 也只取第一条（quick tunnel 单 origin 限制）。
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: demo
+spec:
+  gatewayClassName: quicktunnel
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: demo
+spec:
+  parentRefs:
+    - name: demo
+  rules:
+    - backendRefs:
+        - name: demo-nginx
+          port: 80
+```
+
+```console
+$ kubectl get gateway demo -o jsonpath='{.status.addresses[0].value}'
+quiet-marble-otter.trycloudflare.com    # Hostname 类型不带 scheme，访问时加 https://
+```
+
+完整示例见 `examples/gateway-demo.yaml`。若集群未装 Gateway API CRDs，operator 会跳过 Gateway API 支持并打日志提示，Service annotation 模式不受影响。
+
 ## 已知限制（来自 Quick Tunnel 本身）
 
 - **URL 与 Pod 生命周期绑定**：tunnel Pod 重启后域名必然变化，annotation 会自动更新，但任何把 URL 固化到配置里的用法都会失效。
@@ -98,10 +144,10 @@ $ make vet
 
 ## Roadmap
 
+- [x] Gateway API 支持（`gatewayClassName: quicktunnel`，HTTPRoute = 隧道，Gateway.status.addresses 聚合 URL）
+- [x] 事件（Event）上报 URL 变更前的探活/回收日志（operator 日志）
 - [ ] Ingress 支持（`ingressClassName: quicktunnel`，按 host 拆分多隧道）
-- [ ] Gateway API 支持
 - [ ] operator 自身 metrics（暴露中的隧道数、URL 更新计数）
-- [ ] 事件（Event）上报 URL 变更
 
 ## License
 

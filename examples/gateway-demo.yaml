@@ -1,0 +1,57 @@
+# Demo: expose nginx via Gateway API with a Cloudflare Quick Tunnel.
+# Requires the Gateway API CRDs (v1.4.x):
+#   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
+# The GatewayClass "quicktunnel" is shipped in deploy/install.yaml.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: demo
+spec:
+  gatewayClassName: quicktunnel
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: demo
+spec:
+  parentRefs:
+    - name: demo
+  rules:
+    - backendRefs:
+        - name: demo-nginx
+          port: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-nginx
+  template:
+    metadata:
+      labels:
+        app: demo-nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-nginx
+spec:
+  selector:
+    app: demo-nginx
+  ports:
+    - port: 80
+      targetPort: 80

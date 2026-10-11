@@ -27,8 +27,8 @@ func newFakeManager() *fakeManager {
 	}
 }
 
-func (f *fakeManager) Ensure(_ context.Context, svc *corev1.Service, originURL string) {
-	f.ensured[client.ObjectKeyFromObject(svc)] = originURL
+func (f *fakeManager) Ensure(_ context.Context, owner OwnerRef, originURL string) {
+	f.ensured[owner.Key()] = originURL
 }
 
 func (f *fakeManager) Stop(key types.NamespacedName) {
@@ -84,7 +84,7 @@ func TestReconcileCreatesDeployment(t *testing.T) {
 	}
 
 	want := "http://demo.default.svc.cluster.local:80"
-	args := getTunnelArgs(t, r.Client, "default", DeploymentName("default", "demo"))
+	args := getTunnelArgs(t, r.Client, "default", DeploymentName(OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"}))
 	found := false
 	for i, a := range args {
 		if a == "--url" && i+1 < len(args) && args[i+1] == want {
@@ -114,7 +114,7 @@ func TestReconcileHonorsPortAndSchemeAnnotations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	args := getTunnelArgs(t, r.Client, "default", DeploymentName("default", "demo"))
+	args := getTunnelArgs(t, r.Client, "default", DeploymentName(OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"}))
 	assertContains(t, args, "https://demo.default.svc.cluster.local:8443")
 	assertContains(t, args, "--no-tls-verify")
 }
@@ -138,7 +138,7 @@ func TestReconcileUpdatesOriginOnAnnotationChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	args := getTunnelArgs(t, r.Client, "default", DeploymentName("default", "demo"))
+	args := getTunnelArgs(t, r.Client, "default", DeploymentName(OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"}))
 	assertContains(t, args, "http://demo.default.svc.cluster.local:8080")
 }
 
@@ -162,7 +162,7 @@ func TestReconcileTeardownOnOptOut(t *testing.T) {
 	}
 
 	dep := &appsv1.Deployment{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: "default", Name: DeploymentName("default", "demo")}, dep); err == nil {
+	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: "default", Name: DeploymentName(OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"})}, dep); err == nil {
 		t.Fatal("tunnel deployment still exists after opt-out")
 	}
 	fresh := &corev1.Service{}
@@ -203,7 +203,7 @@ func TestDeploymentOwnership(t *testing.T) {
 	}
 
 	dep := &appsv1.Deployment{}
-	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: "default", Name: DeploymentName("default", "demo")}, dep); err != nil {
+	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: "default", Name: DeploymentName(OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"})}, dep); err != nil {
 		t.Fatal(err)
 	}
 	if len(dep.OwnerReferences) != 1 || dep.OwnerReferences[0].Kind != "Service" || !*dep.OwnerReferences[0].Controller {

@@ -2,10 +2,10 @@ package controller
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 
 	"github.com/go-logr/logr"
 	"regexp"
@@ -15,9 +15,11 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -54,24 +56,22 @@ func (r kubeLogReader) podLogs(ctx context.Context, namespace, name string, tail
 	return io.ReadAll(stream)
 }
 
-// metricsReader reads cloudflared's /metrics endpoint from the tunnel pod.
+// metricsReader reads cloudflared's /metrics endpoint. It goes through the
+// API server pod proxy so it works both in-cluster and from a dev machine —
+// pod IPs are often unreachable from outside the cluster.
 type metricsReader interface {
-	haConnections(ctx context.Context, addr string) (int, error)
+	haConnections(ctx context.Context, namespace, podName string) (int, error)
 }
 
-type httpMetricsReader struct{ hc *http.Client }
+type apiProxyMetricsReader struct{ core kubernetes.Interface }
 
-func (r httpMetricsReader) haConnections(ctx context.Context, addr string) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/metrics", nil)
+func (r apiProxyMetricsReader) haConnections(ctx context.Context, namespace, podName string) (int, error) {
+	body, err := r.core.CoreV1().Pods(namespace).ProxyGet("http", podName,
+		strconv.Itoa(TunnelMetricsPort), "/metrics", nil).DoRaw(ctx)
 	if err != nil {
 		return 0, err
 	}
-	resp, err := r.hc.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	sc := bufio.NewScanner(resp.Body)
+	sc := bufio.NewScanner(bytes.NewReader(body))
 	for sc.Scan() {
 		line := sc.Text()
 		if strings.HasPrefix(line, "#") || !strings.HasPrefix(line, "cloudflared_tunnel_ha_connections") {
@@ -125,14 +125,14 @@ func NewTunnelWatchdog(c client.Client, core kubernetes.Interface) *TunnelWatchd
 	return &TunnelWatchdog{
 		client:  c,
 		logs:    kubeLogReader{core: core},
-		metrics: httpMetricsReader{hc: &http.Client{Timeout: 5 * time.Second}},
+		metrics: apiProxyMetricsReader{core: core},
 		t:       defaultTunables(),
 		loops:   map[types.NamespacedName]*tunnelLoop{},
 	}
 }
 
-func (w *TunnelWatchdog) Ensure(ctx context.Context, svc *corev1.Service, originURL string) {
-	key := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
+func (w *TunnelWatchdog) Ensure(ctx context.Context, owner OwnerRef, originURL string) {
+	key := owner.Key()
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if lp, ok := w.loops[key]; ok {
@@ -145,7 +145,7 @@ func (w *TunnelWatchdog) Ensure(ctx context.Context, svc *corev1.Service, origin
 	loopCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	lp := &tunnelLoop{
 		wd:     w,
-		svc:    key,
+		owner:  owner,
 		origin: originURL,
 		cancel: cancel,
 	}
@@ -175,13 +175,14 @@ func (w *TunnelWatchdog) forget(key types.NamespacedName, lp *tunnelLoop) {
 
 type tunnelLoop struct {
 	wd     *TunnelWatchdog
-	svc    types.NamespacedName
+	owner  OwnerRef
 	origin string
 	cancel context.CancelFunc
 }
 
 func (lp *tunnelLoop) logger() logr.Logger {
-	return log.Log.WithName("watchdog").WithValues("service", lp.svc.String(), "origin", lp.origin)
+	return log.Log.WithName("watchdog").
+		WithValues("ownerKind", lp.owner.Kind, "owner", lp.owner.Key().String(), "origin", lp.origin)
 }
 
 func (lp *tunnelLoop) run(ctx context.Context) {
@@ -218,12 +219,8 @@ func (lp *tunnelLoop) waitForPod(ctx context.Context) *corev1.Pod {
 func (lp *tunnelLoop) listPods(ctx context.Context) ([]corev1.Pod, error) {
 	list := &corev1.PodList{}
 	err := lp.wd.client.List(ctx, list,
-		client.InNamespace(lp.svc.Namespace),
-		client.MatchingLabels{
-			ManagedByLabel:        ManagedByValue,
-			LabelServiceNamespace: lp.svc.Namespace,
-			LabelServiceName:      lp.svc.Name,
-		})
+		client.InNamespace(lp.owner.Namespace),
+		client.MatchingLabels(lp.owner.Labels()))
 	if err != nil {
 		return nil, err
 	}
@@ -257,22 +254,35 @@ func (lp *tunnelLoop) harvest(ctx context.Context, pod *corev1.Pod) (string, boo
 }
 
 func (lp *tunnelLoop) publish(ctx context.Context, url string) {
-	svc := &corev1.Service{}
-	if err := lp.wd.client.Get(ctx, lp.svc, svc); err != nil {
+	var obj client.Object
+	switch lp.owner.Kind {
+	case "HTTPRoute":
+		obj = &gwv1.HTTPRoute{}
+	default:
+		obj = &corev1.Service{}
+	}
+	if err := lp.wd.client.Get(ctx, lp.owner.Key(), obj); err != nil {
 		// Next reconcile re-asserts the loop and republishes.
-		lp.logger().Error(err, "cannot read Service for URL publish")
+		lp.logger().Error(err, "cannot read owner for URL publish")
 		return
 	}
-	if svc.Annotations[AnnURL] == url {
+	base, ok := obj.DeepCopyObject().(client.Object)
+	if !ok {
 		return
 	}
-	base := svc.DeepCopy()
-	if svc.Annotations == nil {
-		svc.Annotations = map[string]string{}
+	acc, err := meta.Accessor(obj)
+	if err != nil {
+		return
 	}
-	svc.Annotations[AnnURL] = url
-	svc.Annotations[AnnURLUpdated] = time.Now().UTC().Format(time.RFC3339)
-	if err := lp.wd.client.Patch(ctx, svc, client.MergeFrom(base)); err != nil {
+	if acc.GetAnnotations()[AnnURL] == url {
+		return
+	}
+	if acc.GetAnnotations() == nil {
+		acc.SetAnnotations(map[string]string{})
+	}
+	acc.GetAnnotations()[AnnURL] = url
+	acc.GetAnnotations()[AnnURLUpdated] = time.Now().UTC().Format(time.RFC3339)
+	if err := lp.wd.client.Patch(ctx, obj, client.MergeFrom(base)); err != nil {
 		lp.logger().Error(err, "failed to publish tunnel URL", "url", url)
 	}
 }
@@ -295,8 +305,7 @@ func (lp *tunnelLoop) probeUntilUnhealthy(ctx context.Context) {
 			down++
 			zero = 0
 		} else {
-			addr := fmt.Sprintf("%s:%d", pods[0].Status.PodIP, TunnelMetricsPort)
-			n, err := lp.wd.metrics.haConnections(ctx, addr)
+			n, err := lp.wd.metrics.haConnections(ctx, pods[0].Namespace, pods[0].Name)
 			switch {
 			case err != nil:
 				down++

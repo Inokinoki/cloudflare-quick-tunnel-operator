@@ -27,8 +27,14 @@ rules:
     resources: ["pods"]
     verbs: ["get", "list", "watch", "delete"]
   - apiGroups: [""]
-    resources: ["pods/log"]
+    resources: ["pods/log", "pods/proxy"]
     verbs: ["get"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses", "gateways", "httproutes"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status"]
+    verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -42,6 +48,15 @@ subjects:
   - kind: ServiceAccount
     name: quicktunnel-operator
     namespace: quicktunnel-operator
+---
+# The Gateway API entry point: create Gateways with
+# spec.gatewayClassName: quicktunnel (requires the Gateway API CRDs).
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: quicktunnel
+spec:
+  controllerName: quicktunnel.dev/gateway
 ---
 apiVersion: apps/v1
 kind: Deployment

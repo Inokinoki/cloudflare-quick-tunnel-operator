@@ -43,24 +43,40 @@ func TestExtractTunnelURLNoMatch(t *testing.T) {
 }
 
 func TestDeploymentName(t *testing.T) {
-	cases := []struct{ ns, name string }{
-		{"default", "demo"},
-		{"kube-system", "a-very-long-service-name-that-exceeds-the-sixty-three-character-limit-for-sure"},
-		{"ingress-nginx", "demo.web.example.com"},
+	cases := []struct {
+		kind string
+		ns   string
+		name string
+	}{
+		{"Service", "default", "demo"},
+		{"Service", "kube-system", "a-very-long-service-name-that-exceeds-the-sixty-three-character-limit-for-sure"},
+		{"Service", "ingress-nginx", "demo.web.example.com"},
+		{"HTTPRoute", "default", "demo"},
+		{"HTTPRoute", "team-a", "also-a-quite-long-route-name-that-exceeds-the-sixty-three-characters"},
 	}
 	for _, c := range cases {
-		got := DeploymentName(c.ns, c.name)
+		got := DeploymentName(OwnerRef{Kind: c.kind, Namespace: c.ns, Name: c.name})
 		if len(got) > 63 {
-			t.Fatalf("%s/%s: %q exceeds 63 chars", c.ns, c.name, got)
+			t.Fatalf("%s %s/%s: %q exceeds 63 chars", c.kind, c.ns, c.name, got)
 		}
-		if !strings.HasPrefix(got, "qt-") {
-			t.Fatalf("%s/%s: %q lacks qt- prefix", c.ns, c.name, got)
+		prefix := "qt-"
+		if c.kind == "HTTPRoute" {
+			prefix = "qt-hr-"
+		}
+		if !strings.HasPrefix(got, prefix) {
+			t.Fatalf("%s %s/%s: %q lacks %s prefix", c.kind, c.ns, c.name, got, prefix)
 		}
 	}
-	if DeploymentName("default", "x") != DeploymentName("default", "x") {
+	svcA := OwnerRef{Kind: "Service", Namespace: "default", Name: "x"}
+	hrA := OwnerRef{Kind: "HTTPRoute", Namespace: "default", Name: "x"}
+	svcB := OwnerRef{Kind: "Service", Namespace: "default", Name: "y"}
+	if DeploymentName(svcA) == DeploymentName(hrA) {
+		t.Fatal("Service and HTTPRoute with same ns/name must not collide")
+	}
+	if DeploymentName(svcA) != DeploymentName(svcA) {
 		t.Fatal("name not deterministic")
 	}
-	if DeploymentName("default", "x") == DeploymentName("default", "y") {
+	if DeploymentName(svcA) == DeploymentName(svcB) {
 		t.Fatal("name collision")
 	}
 }
@@ -81,12 +97,12 @@ func (f *fakeLogReader) podLogs(_ context.Context, _, name string, _ int64) ([]b
 }
 
 type fakeMetrics struct {
-	ha   int
-	err  bool
+	ha    int
+	err   bool
 	calls int
 }
 
-func (f *fakeMetrics) haConnections(_ context.Context, _ string) (int, error) {
+func (f *fakeMetrics) haConnections(_ context.Context, _, _ string) (int, error) {
 	f.calls++
 	if f.err {
 		return 0, context.DeadlineExceeded
@@ -124,11 +140,7 @@ func tunnelPod(name, ns, svcName string, phase corev1.PodPhase, ip string) *core
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
-			Labels: map[string]string{
-				ManagedByLabel:        ManagedByValue,
-				LabelServiceNamespace: ns,
-				LabelServiceName:      svcName,
-			},
+			Labels: (OwnerRef{Kind: "Service", Namespace: ns, Name: svcName}).Labels(),
 		},
 		Status: corev1.PodStatus{Phase: phase, PodIP: ip},
 	}
@@ -148,7 +160,7 @@ func TestWatchdogPublishesURLAndRecyclesZombie(t *testing.T) {
 	metrics := &fakeMetrics{ha: 4}
 	w := newWatchdogForTest(c, logs, metrics)
 
-	w.Ensure(ctx, svc, "http://demo.default.svc.cluster.local:80")
+	w.Ensure(ctx, OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"}, "http://demo.default.svc.cluster.local:80")
 	defer w.Stop(types.NamespacedName{Namespace: "default", Name: "demo"})
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -196,7 +208,7 @@ func TestWatchdogHarvestTimeoutRecyclesPod(t *testing.T) {
 	logs := &fakeLogReader{}
 	metrics := &fakeMetrics{ha: 4}
 	w := newWatchdogForTest(c, logs, metrics)
-	w.Ensure(ctx, svc, "http://demo.default.svc.cluster.local:80")
+	w.Ensure(ctx, OwnerRef{Kind: "Service", Namespace: "default", Name: "demo"}, "http://demo.default.svc.cluster.local:80")
 	defer w.Stop(types.NamespacedName{Namespace: "default", Name: "demo"})
 
 	deadline := time.Now().Add(3 * time.Second)

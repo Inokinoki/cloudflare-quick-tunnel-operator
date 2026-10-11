@@ -9,13 +9,16 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"quicktunnel-operator/internal/controller"
 )
@@ -24,6 +27,7 @@ var scheme = runtime.NewScheme()
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(gwv1.Install(scheme))
 }
 
 func main() {
@@ -76,6 +80,27 @@ func main() {
 		setupLog.Error(err, "unable to create controller")
 		os.Exit(1)
 	}
+
+	if gatewayAPIAvailable(mgr.GetConfig()) {
+		gcRec := &controller.GatewayClassReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}
+		gwRec := &controller.GatewayReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}
+		hrRec := &controller.HTTPRouteReconciler{
+			Client:           mgr.GetClient(),
+			Scheme:           mgr.GetScheme(),
+			CloudflaredImage: cloudflaredImage,
+			Watchdog:         reconciler.Watchdog,
+		}
+		for _, c := range []interface{ SetupWithManager(ctrl.Manager) error }{gcRec, gwRec, hrRec} {
+			if err := c.SetupWithManager(mgr); err != nil {
+				setupLog.Error(err, "unable to create Gateway API controller")
+				os.Exit(1)
+			}
+		}
+		setupLog.Info("Gateway API support enabled", "controllerName", controller.GatewayControllerName)
+	} else {
+		setupLog.Info("Gateway API CRDs (gateway.networking.k8s.io/v1) not installed; " +
+			"skipping Gateway API support, Service annotations still work")
+	}
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
@@ -91,4 +116,15 @@ func main() {
 		setupLog.Error(err, "operator exited with error")
 		os.Exit(1)
 	}
+}
+
+// gatewayAPIAvailable reports whether the Gateway API CRDs are installed;
+// starting informers for absent CRDs would crash the manager.
+func gatewayAPIAvailable(cfg *rest.Config) bool {
+	disc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return false
+	}
+	_, err = disc.ServerResourcesForGroupVersion("gateway.networking.k8s.io/v1")
+	return err == nil
 }
