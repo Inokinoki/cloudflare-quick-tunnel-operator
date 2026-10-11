@@ -1,21 +1,21 @@
-# All-in-one installation for quicktunnel-operator.
-# Requires an image named quicktunnel-operator:dev loaded into the cluster
+# All-in-one installation for cloudflare-quick-tunnel-operator.
+# Requires an image named cloudflare-quick-tunnel-operator:dev loaded into the cluster
 # (e.g. `make minikube-load`), or edit the image below.
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: quicktunnel-operator
+  name: cloudflare-quick-tunnel-operator
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: quicktunnel-operator
-  namespace: quicktunnel-operator
+  name: cloudflare-quick-tunnel-operator
+  namespace: cloudflare-quick-tunnel-operator
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: quicktunnel-operator
+  name: cloudflare-quick-tunnel-operator
 rules:
   - apiGroups: [""]
     resources: ["services"]
@@ -45,15 +45,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: quicktunnel-operator
+  name: cloudflare-quick-tunnel-operator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: quicktunnel-operator
+  name: cloudflare-quick-tunnel-operator
 subjects:
   - kind: ServiceAccount
-    name: quicktunnel-operator
-    namespace: quicktunnel-operator
+    name: cloudflare-quick-tunnel-operator
+    namespace: cloudflare-quick-tunnel-operator
 ---
 # The Gateway API entry point: create Gateways with
 # spec.gatewayClassName: quicktunnel (requires the Gateway API CRDs).
@@ -76,24 +76,24 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: quicktunnel-operator
-  namespace: quicktunnel-operator
+  name: cloudflare-quick-tunnel-operator
+  namespace: cloudflare-quick-tunnel-operator
   labels:
-    app.kubernetes.io/name: quicktunnel-operator
+    app.kubernetes.io/name: cloudflare-quick-tunnel-operator
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: quicktunnel-operator
+      app.kubernetes.io/name: cloudflare-quick-tunnel-operator
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: quicktunnel-operator
+        app.kubernetes.io/name: cloudflare-quick-tunnel-operator
     spec:
-      serviceAccountName: quicktunnel-operator
+      serviceAccountName: cloudflare-quick-tunnel-operator
       containers:
         - name: manager
-          image: quicktunnel-operator:dev
+          image: cloudflare-quick-tunnel-operator:dev
           args:
             - --leader-elect
           ports:

@@ -1,5 +1,5 @@
 GO ?= $(shell command -v go 2>/dev/null || echo $(HOME)/go/bin/go)
-IMAGE ?= quicktunnel-operator:dev
+IMAGE ?= cloudflare-quick-tunnel-operator:dev
 KUBECTL ?= kubectl
 
 .PHONY: tidy build test vet run docker-build minikube-load deploy demo clean
@@ -8,7 +8,7 @@ tidy:
 	$(GO) mod tidy
 
 build:
-	CGO_ENABLED=0 $(GO) build -trimpath -o bin/quicktunnel-operator .
+	CGO_ENABLED=0 $(GO) build -trimpath -o bin/cloudflare-quick-tunnel-operator .
 
 test:
 	$(GO) test ./...

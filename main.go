@@ -1,4 +1,4 @@
-// Command quicktunnel-operator exposes annotated Kubernetes Services to the
+// Command cloudflare-quick-tunnel-operator exposes annotated Kubernetes Services to the
 // public internet through Cloudflare Quick Tunnels (trycloudflare.com),
 // without a Cloudflare account, a domain, or any inbound ports.
 package main
@@ -20,7 +20,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	"quicktunnel-operator/internal/controller"
+	"github.com/Inokinoki/cloudflare-quick-tunnel-operator/internal/controller"
 )
 
 var scheme = runtime.NewScheme()
@@ -51,7 +51,7 @@ func main() {
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "quicktunnel-operator.leader-election",
+		LeaderElectionID:       "cloudflare-quick-tunnel-operator.leader-election",
 	}
 	if namespace != "" {
 		mgrOpts.Cache = cache.Options{DefaultNamespaces: map[string]cache.Config{namespace: {}}}
@@ -121,7 +121,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting quicktunnel-operator",
+	setupLog.Info("starting cloudflare-quick-tunnel-operator",
 		"cloudflaredImage", cloudflaredImage, "namespace", namespace)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "operator exited with error")

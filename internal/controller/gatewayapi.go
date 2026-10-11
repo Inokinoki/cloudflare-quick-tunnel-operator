@@ -66,7 +66,7 @@ func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		Type:               "Accepted",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Accepted",
-		Message:            "managed by quicktunnel-operator",
+		Message:            "managed by cloudflare-quick-tunnel-operator",
 		ObservedGeneration: gc.Generation,
 	})
 	if err := r.Status().Patch(ctx, gc, client.MergeFrom(base)); err != nil {
@@ -288,7 +288,7 @@ func (r *HTTPRouteReconciler) setRouteStatus(ctx context.Context, route *gwv1.HT
 		Type:               "Accepted",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Accepted",
-		Message:            "managed by quicktunnel-operator",
+		Message:            "managed by cloudflare-quick-tunnel-operator",
 		ObservedGeneration: route.Generation,
 	})
 	resolvedCond := metav1.Condition{
@@ -341,7 +341,7 @@ func syncGatewayStatus(ctx context.Context, c client.Client, gw *gwv1.Gateway) e
 		Type:               "Accepted",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Accepted",
-		Message:            "managed by quicktunnel-operator",
+		Message:            "managed by cloudflare-quick-tunnel-operator",
 		ObservedGeneration: gw.Generation,
 	})
 	programmed := metav1.Condition{

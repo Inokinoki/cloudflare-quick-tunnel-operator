@@ -1,4 +1,4 @@
-# quicktunnel-operator
+# cloudflare-quick-tunnel-operator
 
 把 Kubernetes 集群里的 Service 通过 **Cloudflare Quick Tunnel**（`trycloudflare.com`）暴露到公网——**不需要 Cloudflare 账号、不需要域名、不需要公网 IP、不需要开任何入站端口**。
 
@@ -39,7 +39,7 @@ https://quiet-marble-otter.trycloudflare.com
    Cloudflare 边缘 ◄┼───────────────────────────────────┘ 出站隧道（outbound-only）           │
                     │        ▲ 采集日志里的 URL / 探活 / 僵尸重启                               │
                     │  ┌─────┴──────────────┐                                             │
-                    │  │ quicktunnel-operator │                                             │
+                    │  │ cloudflare-quick-tunnel-operator │                                             │
                     │  └────────────────────┘                                             │
                     └────────────────────────────────────────────────────────────────────────┘
 ```

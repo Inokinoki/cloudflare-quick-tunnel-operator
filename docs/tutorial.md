@@ -1,4 +1,4 @@
-# quicktunnel-operator 安装与使用教程
+# cloudflare-quick-tunnel-operator 安装与使用教程
 
 本文是手把手教程，所有命令均在 minikube + Kubernetes v1.33 上实际验证过。三种暴露方式可混用：
 
@@ -23,23 +23,23 @@
 ### 方式 A：集群内部署（正式用法）
 
 ```console
-$ git clone <repo> && cd quicktunnel-operator
+$ git clone <repo> && cd cloudflare-quick-tunnel-operator
 
 # 构建镜像（或 docker buildx 指定多架构）
-$ make docker-build                          # → quicktunnel-operator:dev
+$ make docker-build                          # → cloudflare-quick-tunnel-operator:dev
 
 # 把镜像塞进集群：
 #   minikube:
-$ minikube image load quicktunnel-operator:dev
+$ minikube image load cloudflare-quick-tunnel-operator:dev
 #   kind:
-$ kind load docker-image quicktunnel-operator:dev --name <cluster名>
+$ kind load docker-image cloudflare-quick-tunnel-operator:dev --name <cluster名>
 
 # 一键安装：Namespace + ServiceAccount + ClusterRole + operator Deployment
 #           + IngressClass quicktunnel + GatewayClass quicktunnel
 $ kubectl apply -f deploy/install.yaml
 
 # 等待就绪
-$ kubectl -n quicktunnel-operator wait deploy/quicktunnel-operator --for=condition=Available --timeout=90s
+$ kubectl -n cloudflare-quick-tunnel-operator wait deploy/cloudflare-quick-tunnel-operator --for=condition=Available --timeout=90s
 ```
 
 minikube 用户如果没装独立 kubectl，可以 `KUBECTL="minikube kubectl --" make deploy`。
@@ -49,7 +49,7 @@ minikube 用户如果没装独立 kubectl，可以 `KUBECTL="minikube kubectl --
 远程集群没法 side-load 镜像，把构建好的镜像推到集群能拉取的 registry（Docker Hub / GHCR / 私有 registry），然后改一下 `deploy/install.yaml` 里的 `image:` 即可：
 
 ```console
-$ export IMAGE=ghcr.io/<你的用户名>/quicktunnel-operator:v0.1.0   # 或 docker.io/<你>/...
+$ export IMAGE=ghcr.io/<你的用户名>/cloudflare-quick-tunnel-operator:v0.1.0   # 或 docker.io/<你>/...
 
 # 构建并推送（x86 集群）
 $ docker build -t $IMAGE .
@@ -60,18 +60,18 @@ $ docker buildx build --platform linux/amd64,linux/arm64 -t $IMAGE --push .
 
 # 安装并指向你的镜像
 $ kubectl apply -f deploy/install.yaml
-$ kubectl -n quicktunnel-operator set image deploy/quicktunnel-operator manager=$IMAGE
+$ kubectl -n cloudflare-quick-tunnel-operator set image deploy/cloudflare-quick-tunnel-operator manager=$IMAGE
 
 # 验证
-$ kubectl -n quicktunnel-operator rollout status deploy/quicktunnel-operator
+$ kubectl -n cloudflare-quick-tunnel-operator rollout status deploy/cloudflare-quick-tunnel-operator
 ```
 
 私有 registry 需要拉取凭据：
 
 ```console
-$ kubectl -n quicktunnel-operator create secret docker-registry regcred \
+$ kubectl -n cloudflare-quick-tunnel-operator create secret docker-registry regcred \
     --docker-server=<registry地址> --docker-username=<用户> --docker-password=<密码>
-$ kubectl -n quicktunnel-operator patch deploy quicktunnel-operator \
+$ kubectl -n cloudflare-quick-tunnel-operator patch deploy cloudflare-quick-tunnel-operator \
     -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"regcred"}]}}}}'
 ```
 
@@ -85,7 +85,7 @@ operator 直接跑在你本机上，通过 kubeconfig 连集群：
 
 ```console
 $ make build
-$ ./bin/quicktunnel-operator
+$ ./bin/cloudflare-quick-tunnel-operator
 ```
 
 > 注意：本地模式需要 kubeconfig 里的身份有 Service/Ingress/Deployment/Pod 的操作权限（minikube/kind 默认 admin 没问题）；本机 8080 端口被占的话加 `-metrics-bind-address :18080`。
@@ -93,8 +93,8 @@ $ ./bin/quicktunnel-operator
 ### 验证安装
 
 ```console
-$ kubectl -n quicktunnel-operator logs deploy/quicktunnel-operator | head -5
-# 看到 "starting quicktunnel-operator" 即成功；
+$ kubectl -n cloudflare-quick-tunnel-operator logs deploy/cloudflare-quick-tunnel-operator | head -5
+# 看到 "starting cloudflare-quick-tunnel-operator" 即成功；
 # 集群里没装 Gateway API CRDs 时会多一行 "skipping Gateway API support"，属正常，
 # Service annotation 和 Ingress 模式不受影响。
 ```
@@ -224,13 +224,13 @@ Accepted ResolvedRefs
 
 ```console
 # 列出所有隧道 Pod（所有暴露方式统一打标）
-$ kubectl get pods -A -l app.kubernetes.io/managed-by=quicktunnel-operator
+$ kubectl get pods -A -l app.kubernetes.io/managed-by=cloudflare-quick-tunnel-operator
 
 # 看某条隧道的 cloudflared 日志（确认边缘连接数、当前 URL）
 $ kubectl logs <tunnel-pod> | grep -E 'trycloudflare|Registered'
 
 # operator 日志：URL 发布、僵尸回收都有记录
-$ kubectl -n quicktunnel-operator logs deploy/quicktunnel-operator | grep watchdog
+$ kubectl -n cloudflare-quick-tunnel-operator logs deploy/cloudflare-quick-tunnel-operator | grep watchdog
 ```
 
 **URL 生命周期**（重要契约）：URL 与隧道 Pod 生命周期绑定，Pod 重建（节点排水、镜像更新、探活回收）后 URL 必然变化，annotation/status 会在几秒内自动更新。**消费方必须动态读取**，不要固化到配置里。

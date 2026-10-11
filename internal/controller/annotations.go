@@ -22,7 +22,7 @@ const (
 	AnnURLUpdated = "quicktunnel.dev/url-updated-at"
 
 	ManagedByLabel        = "app.kubernetes.io/managed-by"
-	ManagedByValue        = "quicktunnel-operator"
+	ManagedByValue        = "cloudflare-quick-tunnel-operator"
 	LabelOwnerKind        = "quicktunnel.dev/owner-kind"
 	LabelOwnerNamespace   = "quicktunnel.dev/owner-namespace"
 	LabelOwnerName        = "quicktunnel.dev/owner-name"

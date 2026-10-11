@@ -1,4 +1,4 @@
-module quicktunnel-operator
+module github.com/Inokinoki/cloudflare-quick-tunnel-operator
 
 go 1.24.0
 
