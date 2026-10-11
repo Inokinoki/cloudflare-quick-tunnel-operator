@@ -33,8 +33,6 @@ $ make docker-build                          # → quicktunnel-operator:dev
 $ minikube image load quicktunnel-operator:dev
 #   kind:
 $ kind load docker-image quicktunnel-operator:dev --name <cluster名>
-#   远程/云集群: 把镜像 push 到你的 registry，然后编辑 deploy/install.yaml 里的
-#   image: quicktunnel-operator:dev 为完整镜像地址
 
 # 一键安装：Namespace + ServiceAccount + ClusterRole + operator Deployment
 #           + IngressClass quicktunnel + GatewayClass quicktunnel
@@ -45,6 +43,41 @@ $ kubectl -n quicktunnel-operator wait deploy/quicktunnel-operator --for=conditi
 ```
 
 minikube 用户如果没装独立 kubectl，可以 `KUBECTL="minikube kubectl --" make deploy`。
+
+### 1.1 远程/云集群安装（需要推镜像到 registry）
+
+远程集群没法 side-load 镜像，把构建好的镜像推到集群能拉取的 registry（Docker Hub / GHCR / 私有 registry），然后改一下 `deploy/install.yaml` 里的 `image:` 即可：
+
+```console
+$ export IMAGE=ghcr.io/<你的用户名>/quicktunnel-operator:v0.1.0   # 或 docker.io/<你>/...
+
+# 构建并推送（x86 集群）
+$ docker build -t $IMAGE .
+$ docker push $IMAGE
+
+# 集群是 ARM（如树莓派 / Oracle ARM 免费机）时构建双架构：
+$ docker buildx build --platform linux/amd64,linux/arm64 -t $IMAGE --push .
+
+# 安装并指向你的镜像
+$ kubectl apply -f deploy/install.yaml
+$ kubectl -n quicktunnel-operator set image deploy/quicktunnel-operator manager=$IMAGE
+
+# 验证
+$ kubectl -n quicktunnel-operator rollout status deploy/quicktunnel-operator
+```
+
+私有 registry 需要拉取凭据：
+
+```console
+$ kubectl -n quicktunnel-operator create secret docker-registry regcred \
+    --docker-server=<registry地址> --docker-username=<用户> --docker-password=<密码>
+$ kubectl -n quicktunnel-operator patch deploy quicktunnel-operator \
+    -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"regcred"}]}}}}'
+```
+
+> 说明：operator 的隧道探活走 API server 的 `pods/proxy` 子资源（RBAC 已含在 install.yaml），标准发行版集群（kubeadm/EKS/GKE/ACK/TKE 等）都支持。若你的平台限制该子资源，日志会持续出现 `tunnel wedged, recycling tunnel pod`，这是已知边界。
+
+不想在远程集群装任何东西也可以：用[本地开发模式](#方式-b本地开发模式免打镜像推荐先体验)把 `KUBECONFIG` 指向远程集群，operator 跑在本机、隧道 Pod 跑在集群里，效果等同（前提是 kubeconfig 身份具备 install.yaml 中 ClusterRole 的权限，云集群的管理员 kubeconfig 天然满足）。
 
 ### 方式 B：本地开发模式（免打镜像，推荐先体验）
 
