@@ -134,6 +134,8 @@ metadata:
 $ kubectl annotate svc my-svc quicktunnel.dev/expose-
 ```
 
+> 想让 URL 出现在 Ingress 的标准位置（`kubectl get ingress` 的 ADDRESS 列、`status.loadBalancer`）而不是 Service 注解上？改用无 host 规则的 Ingress——见 `examples/ingress-hostless.yaml` 和第 3 节末尾。
+
 ## 3. 使用方式二：Ingress（按 host 拆隧道）
 
 `install.yaml` 已创建 `IngressClass quicktunnel`。每个 host 规则得到一条独立隧道：

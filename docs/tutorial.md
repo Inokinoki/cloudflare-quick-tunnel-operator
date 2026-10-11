@@ -135,6 +135,8 @@ Stop exposing (tunnel Deployment is removed and URL annotations cleaned up autom
 $ kubectl annotate svc my-svc quicktunnel.dev/expose-
 ```
 
+> Prefer the URL on standard Ingress fields (`kubectl get ingress` ADDRESS column, `status.loadBalancer`) instead of a Service annotation? Use a hostless Ingress — see `examples/ingress-hostless.yaml` and the end of section 3.
+
 ## 3. Mode 2: Ingress (one tunnel per host)
 
 `install.yaml` already created the `IngressClass quicktunnel`. Each host rule gets its own tunnel:

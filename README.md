@@ -172,6 +172,19 @@ api-xxx.trycloudflare.com web-yyy.trycloudflare.com
 
 Full example: `examples/ingress-demo.yaml`.
 
+### Exposing a single Service via Ingress
+
+A hostless Ingress is the Ingress-mode equivalent of the Service annotation: one tunnel, and the URL becomes readable from the standard Ingress fields (`kubectl get ingress` ADDRESS column, `status.loadBalancer`):
+
+```console
+$ kubectl apply -f examples/ingress-hostless.yaml
+$ kubectl get ingress demo-nginx
+NAME         CLASS         HOSTS   ADDRESS                                  PORTS   AGE
+demo-nginx   quicktunnel   *       quiet-marble-otter.trycloudflare.com     80      30s
+```
+
+The full `https://` URL also lands on the bare `quicktunnel.dev/url` annotation. Do not combine this with `quicktunnel.dev/expose` on the same Service — you would get two independent tunnels and two URLs.
+
 ## Known limitations (inherent to Quick Tunnels)
 
 - **URLs are tied to the pod lifecycle**: the hostname always changes when a tunnel pod restarts. Annotations are updated automatically, but anything that hard-codes a URL into configuration will break.

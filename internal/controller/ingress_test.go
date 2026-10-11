@@ -226,6 +226,23 @@ func TestIngressStatusAggregatesHosts(t *testing.T) {
 	}
 }
 
+func TestIngressHostlessRule(t *testing.T) {
+	fm := newFakeManager()
+	r := newIngressReconciler(t, fm,
+		testIngress(hostRule("", "demo-nginx", 80)),
+		backendService("demo-nginx"),
+	)
+
+	reconcile(t, r, "default", "demo")
+
+	want := "http://demo-nginx.default.svc.cluster.local:80"
+	args := getTunnelArgs(t, r.Client, "default", DeploymentName(ingressOwner("")))
+	assertContains(t, args, want)
+	if got := fm.ensured[loopKey(ingressOwner(""))]; got != want {
+		t.Fatalf("watchdog ensured %q, want %q", got, want)
+	}
+}
+
 func TestIngressForeignClassIgnored(t *testing.T) {
 	fm := newFakeManager()
 	ing := testIngress(hostRule("web.demo.local", "demo-nginx", 80))

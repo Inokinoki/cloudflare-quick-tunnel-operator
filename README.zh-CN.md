@@ -172,6 +172,19 @@ api-xxx.trycloudflare.com web-yyy.trycloudflare.com
 
 完整示例 `examples/ingress-demo.yaml`。
 
+### 用 Ingress 暴露单个 Service
+
+一条无 host 规则的 Ingress 等价于 Service annotation 模式：同样一条隧道，但 URL 出现在 Ingress 的标准位置（`kubectl get ingress` 的 ADDRESS 列、`status.loadBalancer`）：
+
+```console
+$ kubectl apply -f examples/ingress-hostless.yaml
+$ kubectl get ingress demo-nginx
+NAME         CLASS         HOSTS   ADDRESS                                  PORTS   AGE
+demo-nginx   quicktunnel   *       quiet-marble-otter.trycloudflare.com     80      30s
+```
+
+完整 `https://` URL 同时写在裸 `quicktunnel.dev/url` 注解上。注意不要和同一 Service 上的 `quicktunnel.dev/expose` 叠加使用——那会开出两条独立隧道、两个 URL。
+
 ## 已知限制（来自 Quick Tunnel 本身）
 
 - **URL 与 Pod 生命周期绑定**：tunnel Pod 重启后域名必然变化，annotation 会自动更新，但任何把 URL 固化到配置里的用法都会失效。
