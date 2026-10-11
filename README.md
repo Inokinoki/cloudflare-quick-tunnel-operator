@@ -4,53 +4,164 @@
 
 Expose Kubernetes Services to the public internet via **Cloudflare Quick Tunnels** (`trycloudflare.com`) — **no Cloudflare account, no domain, no public IP, no inbound ports**.
 
-> 📖 Full installation and usage tutorial: **[docs/tutorial.md](docs/tutorial.md)** (all three exposure modes, day-2 commands, troubleshooting, uninstall). Also available in [Chinese](docs/tutorial.zh-CN.md).
+- Three exposure modes: **Ingress** (`ingressClassName: quicktunnel`, one tunnel per host), **Gateway API** (`gatewayClassName: quicktunnel`), or plain **Service annotations**
+- Install with **Helm**, a raw manifest, or run the operator locally against any kubeconfig
+- Self-healing: harvests tunnel URLs from pod logs, probes cloudflared health, recycles zombie tunnels automatically
 
-Three exposure modes are supported: Service annotation (simplest), Ingress (`ingressClassName: quicktunnel`, one tunnel per host), and Gateway API (`gatewayClassName: quicktunnel`).
+> 📖 Full tutorial: **[docs/tutorial.md](docs/tutorial.md)** (also in [简体中文](docs/tutorial.zh-CN.md)) — installation details, day-2 operations, troubleshooting, uninstall.
 
-Annotate a Service, and a few seconds later the operator writes the public URL back:
+## Quick start
 
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: demo-nginx
-  annotations:
-    quicktunnel.dev/expose: "true"
-spec:
-  selector:
-    app: demo-nginx
-  ports:
-    - port: 80
-```
+Install with Helm, then expose a demo nginx through an Ingress:
 
 ```console
-$ kubectl get svc demo-nginx -o jsonpath='{.metadata.annotations.quicktunnel\.dev/url}'
-https://quiet-marble-otter.trycloudflare.com
+# 1. Build the operator image (no public image is published yet) and load it
+$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev
+
+# 2. Install via Helm (creates the quicktunnel IngressClass & GatewayClass)
+$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+    -n cloudflare-quick-tunnel-operator --create-namespace
+
+# 3. Expose a demo nginx through a hostless Ingress
+$ kubectl apply -f examples/ingress-hostless.yaml
+
+# 4. Read the public URL from the Ingress
+$ kubectl get ingress demo-nginx
+NAME         CLASS         HOSTS   ADDRESS                                  PORTS   AGE
+demo-nginx   quicktunnel   *       quiet-marble-otter.trycloudflare.com     80      30s
+
+$ curl https://quiet-marble-otter.trycloudflare.com
 ```
+
+On a remote/cloud cluster, push the image to a registry and add
+`--set image.repository=<registry>/<image> --set image.tag=<tag>` to the
+helm install command — see the tutorial for details.
 
 ## How it works
 
 ```
-                    ┌───────────────────────── Kubernetes cluster ─────────────────────────┐
-                    │                                                                       │
-  user browser      │  ┌────────────┐ creates ┌─────────────────┐   forwards ┌───────────┐  │
-──────────────┐    │  │  Service    │◄───────│ cloudflared Pod │───────────►│  app Pod  │  │
-              │    │  │ (annotation │        │ (one per tunnel)│            └───────────┘  │
-              ▼    │  │  + URL back)│        └────────┬────────┘                           │
- Cloudflare edge ◄──┼──────────────────────────────────┘ outbound-only tunnel               │
-                    │        ▲ harvest URL from logs / probe health / recycle zombies      │
-                    │  ┌─────┴───────────────────┐                                       │
-                    │  │ cloudflare-quick-tunnel-operator │                                 │
-                    │  └─────────────────────────┘                                       │
-                    └───────────────────────────────────────────────────────────────────────┘
+   users on the internet
+          │ HTTPS
+          ▼
+   Cloudflare edge
+          │  quick tunnel (outbound-only, no inbound ports)
+          ▼
+   cloudflared pod (one per tunnel)  ──►  Service ClusterIP  ──►  app pods (any node)
+          ▲
+          │ creates tunnel / harvests URL / probes health / recycles zombies
+          │
+   cloudflare-quick-tunnel-operator
+          ▲
+          │ watches
+          │
+   Service · Ingress · HTTPRoute (whatever you expose)
 ```
 
-1. The operator watches Services annotated with `quicktunnel.dev/expose: "true"` and creates a `cloudflared tunnel --url ...` Deployment per exposed owner (via ownerReference, so it is garbage-collected with the owner).
-2. A background watchdog polls the tunnel pod's logs, extracts the assigned `*.trycloudflare.com` URL, and patches it back into the owner's `quicktunnel.dev/url` annotation.
-3. The watchdog keeps probing cloudflared's `/metrics` (`cloudflared_tunnel_ha_connections`). Quick Tunnels have a known "zombie" mode — the process stays alive with zero edge connections and never recovers — and the operator recycles the pod when it detects it. The new URL is republished automatically.
+1. The operator watches exposed objects (annotated Services, quicktunnel Ingresses, HTTPRoutes on a quicktunnel Gateway) and creates a `cloudflared tunnel --url ...` Deployment per tunnel, ownerReferenced to the exposing object so it is garbage-collected with it.
+2. A background watchdog polls the tunnel pod's logs, extracts the assigned `*.trycloudflare.com` URL, and publishes it to annotations and status (`Ingress.status.loadBalancer`, `Gateway.status.addresses`).
+3. The watchdog keeps probing cloudflared's `/metrics` (`cloudflared_tunnel_ha_connections`). Quick Tunnels have a known "zombie" mode — the process stays alive with zero edge connections and never recovers — and the operator recycles the pod when it detects it, then republishes the new URL.
 
-## Annotation reference
+## Installation
+
+### Helm (recommended)
+
+```console
+$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev   # or push to a registry
+$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+    -n cloudflare-quick-tunnel-operator --create-namespace
+
+# Using a registry image:
+$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+    -n cloudflare-quick-tunnel-operator --create-namespace \
+    --set image.repository=ghcr.io/<you>/cloudflare-quick-tunnel-operator \
+    --set image.tag=v0.1.0
+```
+
+The chart ships the operator Deployment, RBAC (including leader-election
+leases), and the `quicktunnel` IngressClass & GatewayClass — each toggleable
+via `charts/cloudflare-quick-tunnel-operator/values.yaml`.
+
+### Raw manifest
+
+```console
+$ make minikube-load          # docker build + minikube image load
+$ make deploy                 # kubectl apply -f deploy/install.yaml
+```
+
+Equivalent to the chart; minikube users without a standalone kubectl can use
+`KUBECTL="minikube kubectl --" make deploy`. Migrating from the manifest to
+Helm? Delete the previously created IngressClass/GatewayClass first — Helm
+refuses to adopt resources it does not own.
+
+### Local dev mode
+
+Run the operator on your machine against the current kubeconfig — no image
+needed:
+
+```console
+$ make build
+$ ./bin/cloudflare-quick-tunnel-operator
+```
+
+## Usage
+
+### Ingress — one tunnel per host
+
+`ingressClassName: quicktunnel` is all it takes. Rules are grouped by host;
+each host gets its own tunnel (and its own URL):
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo
+spec:
+  ingressClassName: quicktunnel
+  rules:
+    - host: web.demo.local        # → tunnel 1 + annotation quicktunnel.dev/url.web.demo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-nginx
+                port: { number: 80 }
+    - host: api.demo.local        # → tunnel 2 + annotation quicktunnel.dev/url.api.demo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-echo
+                port: { number: 5678 }
+```
+
+```console
+$ kubectl apply -f examples/ingress-demo.yaml
+
+# All public addresses, aggregated for standard tooling (external-dns & co):
+$ kubectl get ingress demo -o jsonpath='{.status.loadBalancer.ingress[*].hostname}'
+api-xxx.trycloudflare.com web-yyy.trycloudflare.com
+
+# Per-host exact URL:
+$ kubectl get ingress demo -o jsonpath='{.metadata.annotations.quicktunnel\.dev/url\.web\.demo\.local}'
+```
+
+Mapping notes:
+
+- Hostless rules share one tunnel (bare `quicktunnel.dev/url` annotation), with `defaultBackend` as fallback when there are no rules — see `examples/ingress-hostless.yaml` for the single-Service case;
+- Each host group uses the **first Service backend of its first rule** (path-level routing cannot be honored — a quick tunnel is a single origin);
+- The random trycloudflare.com hostname **cannot serve the rule's own host** — hosts are purely the grouping/tunnel-splitting dimension.
+
+### Service annotation — the one-liner
+
+```console
+$ kubectl annotate svc my-svc quicktunnel.dev/expose=true
+$ kubectl get svc my-svc -o jsonpath='{.metadata.annotations.quicktunnel\.dev/url}'
+https://quiet-marble-otter.trycloudflare.com
+```
 
 | Annotation | Description | Default |
 |---|---|---|
@@ -60,48 +171,17 @@ https://quiet-marble-otter.trycloudflare.com
 | `quicktunnel.dev/url` | **written by the operator**: current public URL | — |
 | `quicktunnel.dev/url-updated-at` | **written by the operator**: last URL update time | — |
 
-## Quick start (minikube)
+Remove the annotation to stop exposing (tunnel Deployment and URL annotations are cleaned up automatically). Prefer the URL on standard Ingress fields instead? Use a hostless Ingress as shown above.
 
-```console
-$ minikube start
-$ make build
-$ make run                     # run the operator locally against the current kubeconfig
-# in another terminal:
-$ kubectl apply -f examples/demo.yaml
-$ kubectl get svc demo-nginx -o jsonpath='{.metadata.annotations.quicktunnel\.dev/url}'
-https://quiet-marble-otter.trycloudflare.com
-$ curl https://quiet-marble-otter.trycloudflare.com
-```
+### Gateway API
 
-Deploying in-cluster:
-
-```console
-$ make minikube-load          # docker build + minikube image load
-$ make deploy                 # kubectl apply -f deploy/install.yaml
-```
-
-or with Helm:
-
-```console
-$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
-    -n cloudflare-quick-tunnel-operator --create-namespace
-```
-
-minikube users without a standalone kubectl can use `KUBECTL="minikube kubectl --" make deploy`.
-
-## Gateway API support
-
-The standard [Gateway API](https://gateway-api.sigs.k8s.io/) is also supported (CRDs required):
+Requires the [Gateway API](https://gateway-api.sigs.k8s.io/) CRDs:
 
 ```console
 $ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
 ```
 
-`deploy/install.yaml` ships a `GatewayClass quicktunnel` (controllerName `quicktunnel.dev/gateway`). The mapping:
-
-- **HTTPRoute = one tunnel**: each HTTPRoute attached to a quicktunnel Gateway gets a tunnel targeting the first Service backendRef of its first rule; the URL surfaces on the route's `quicktunnel.dev/url` annotation and route status (Accepted / ResolvedRefs);
-- **Gateway = URL aggregator**: the URLs of all attached routes are collected into `status.addresses`, and the Gateway turns Programmed once at least one URL exists — this is the "official" place to read addresses;
-- **hostname / path matches are not honored**: trycloudflare.com names are random and cannot serve custom hostnames; only the first rule applies (a quick tunnel is a single origin).
+**HTTPRoute = one tunnel**: each route attached to a quicktunnel Gateway gets a tunnel targeting the first Service backendRef of its first rule; the URL surfaces on the route's `quicktunnel.dev/url` annotation and its status (Accepted / ResolvedRefs). The Gateway aggregates all route URLs into `status.addresses` and turns Programmed once at least one exists:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -129,72 +209,18 @@ spec:
 ```
 
 ```console
+$ kubectl apply -f examples/gateway-demo.yaml
 $ kubectl get gateway demo -o jsonpath='{.status.addresses[0].value}'
-quiet-marble-otter.trycloudflare.com    # Hostname addresses carry no scheme; prepend https://
+quiet-marble-otter.trycloudflare.com    # Hostname carries no scheme; prepend https://
 ```
 
-See `examples/gateway-demo.yaml` for a complete example. If the Gateway API CRDs are not installed, the operator logs a notice and skips Gateway API support; Service annotation and Ingress modes are unaffected.
-
-## Ingress support
-
-Classic Ingress is supported too (`deploy/install.yaml` ships an `IngressClass quicktunnel`). The mapping:
-
-- **One tunnel per host**: Ingress rules are grouped by host, and each host gets its own tunnel (and URL); hostless rules share one, with `defaultBackend` as fallback;
-- each host group uses the **first Service backend of its first rule** (path-level routing cannot be honored — single origin);
-- URLs land on the Ingress's `quicktunnel.dev/url.<host>` annotations (bare `quicktunnel.dev/url` for the hostless group) and are aggregated into **`status.loadBalancer.ingress`** — the field standard tooling such as external-dns reads (Hostname carries no scheme);
-- the random trycloudflare.com hostname **cannot actually serve the rule's own host** — hosts are purely the grouping/tunnel-splitting dimension.
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: demo
-spec:
-  ingressClassName: quicktunnel
-  rules:
-    - host: web.demo.local        # → tunnel 1 + quicktunnel.dev/url.web.demo.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: demo-nginx
-                port: { number: 80 }
-    - host: api.demo.local        # → tunnel 2 + quicktunnel.dev/url.api.demo.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: demo-echo
-                port: { number: 5678 }
-```
-
-```console
-$ kubectl get ingress demo -o jsonpath='{.status.loadBalancer.ingress[*].hostname}'
-api-xxx.trycloudflare.com web-yyy.trycloudflare.com
-```
-
-Full example: `examples/ingress-demo.yaml`.
-
-### Exposing a single Service via Ingress
-
-A hostless Ingress is the Ingress-mode equivalent of the Service annotation: one tunnel, and the URL becomes readable from the standard Ingress fields (`kubectl get ingress` ADDRESS column, `status.loadBalancer`):
-
-```console
-$ kubectl apply -f examples/ingress-hostless.yaml
-$ kubectl get ingress demo-nginx
-NAME         CLASS         HOSTS   ADDRESS                                  PORTS   AGE
-demo-nginx   quicktunnel   *       quiet-marble-otter.trycloudflare.com     80      30s
-```
-
-The full `https://` URL also lands on the bare `quicktunnel.dev/url` annotation. Do not combine this with `quicktunnel.dev/expose` on the same Service — you would get two independent tunnels and two URLs.
+If the Gateway API CRDs are not installed, the operator logs a notice and
+skips Gateway API support; the other modes are unaffected. Hostnames and
+path matches are not honored (same single-origin reasoning as Ingress).
 
 ## Known limitations (inherent to Quick Tunnels)
 
-- **URLs are tied to the pod lifecycle**: the hostname always changes when a tunnel pod restarts. Annotations are updated automatically, but anything that hard-codes a URL into configuration will break.
+- **URLs are tied to the pod lifecycle**: the hostname always changes when a tunnel pod restarts. Annotations/status are updated automatically, but anything that hard-codes a URL into configuration will break — always read dynamically.
 - **200 concurrent in-flight requests per tunnel** — extra requests get 429. Fine for dev/demo, not for load tests or production.
 - **SSE (Server-Sent Events) is not supported.**
 - **No SLA**: Cloudflare may drop idle tunnels. The operator mitigates this with probing and automatic rebuilds, but it remains best-effort.
@@ -216,6 +242,7 @@ $ make vet
 
 - [x] Gateway API support (`gatewayClassName: quicktunnel`, HTTPRoute = tunnel, Gateway.status.addresses aggregates URLs)
 - [x] Ingress support (`ingressClassName: quicktunnel`, one tunnel per host, status.loadBalancer aggregates URLs)
+- [x] Helm chart
 - [ ] Operator metrics (tunnels exposed, URL update counts)
 
 ## License
