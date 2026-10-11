@@ -1,113 +1,116 @@
-# cloudflare-quick-tunnel-operator 安装与使用教程
+# cloudflare-quick-tunnel-operator — Installation & Usage Tutorial
 
-本文是手把手教程，所有命令均在 minikube + Kubernetes v1.33 上实际验证过。三种暴露方式可混用：
+**English** | [简体中文](tutorial.zh-CN.md)
 
-| 方式 | 适用场景 | 前置 |
+A hands-on tutorial; every command has been verified on minikube + Kubernetes v1.33. The three exposure modes can be mixed freely:
+
+| Mode | Best for | Prerequisite |
 |---|---|---|
-| Service annotation | 单个 Service，最快 | 无 |
-| Ingress | 多个 Service、按 host 分流 | 无 |
-| Gateway API | 新标准、未来方向 | 需装 Gateway API CRDs |
+| Service annotation | A single Service, fastest | none |
+| Ingress | Multiple Services, split by host | none |
+| Gateway API | The new standard, going forward | Gateway API CRDs |
 
 ---
 
-## 0. 前置条件
+## 0. Prerequisites
 
-- 一个 Kubernetes 集群（minikube / kind / 云集群均可）+ `kubectl`
-- 想容器化部署：Docker（构建镜像用）
-- 想本地开发模式：Go 1.24+（本仓库 Makefile 会自动探测 `~/go/bin/go`）
+- A Kubernetes cluster (minikube / kind / any cloud cluster) + `kubectl`
+- In-cluster deployment: Docker (to build the image)
+- Local dev mode: Go 1.24+ (the Makefile auto-detects `~/go/bin/go`)
 
-集群**不需要**公网 IP、不需要开放任何入站端口——quick tunnel 是纯出站连接。
+The cluster does **not** need a public IP or any open inbound ports — quick tunnels are outbound-only.
 
-## 1. 安装
+## 1. Installation
 
-### 方式 A：集群内部署（正式用法）
+### Option A: in-cluster deployment (production use)
 
 ```console
 $ git clone <repo> && cd cloudflare-quick-tunnel-operator
 
-# 构建镜像（或 docker buildx 指定多架构）
+# Build the image (use docker buildx for multi-arch)
 $ make docker-build                          # → cloudflare-quick-tunnel-operator:dev
 
-# 把镜像塞进集群：
+# Load the image into the cluster:
 #   minikube:
 $ minikube image load cloudflare-quick-tunnel-operator:dev
 #   kind:
-$ kind load docker-image cloudflare-quick-tunnel-operator:dev --name <cluster名>
+$ kind load docker-image cloudflare-quick-tunnel-operator:dev --name <cluster>
 
-# 一键安装：Namespace + ServiceAccount + ClusterRole + operator Deployment
-#           + IngressClass quicktunnel + GatewayClass quicktunnel
+# One-shot install: Namespace + ServiceAccount + ClusterRole + operator Deployment
+#                    + IngressClass quicktunnel + GatewayClass quicktunnel
 $ kubectl apply -f deploy/install.yaml
 
-# 等待就绪
+# Wait for readiness
 $ kubectl -n cloudflare-quick-tunnel-operator wait deploy/cloudflare-quick-tunnel-operator --for=condition=Available --timeout=90s
 ```
 
-minikube 用户如果没装独立 kubectl，可以 `KUBECTL="minikube kubectl --" make deploy`。
+minikube users without a standalone kubectl can use `KUBECTL="minikube kubectl --" make deploy`.
 
-### 1.1 远程/云集群安装（需要推镜像到 registry）
+### 1.1 Remote / cloud clusters (push the image to a registry)
 
-远程集群没法 side-load 镜像，把构建好的镜像推到集群能拉取的 registry（Docker Hub / GHCR / 私有 registry），然后改一下 `deploy/install.yaml` 里的 `image:` 即可：
+Remote clusters cannot side-load images. Push the built image to a registry the cluster can pull from (Docker Hub / GHCR / private), then point `deploy/install.yaml`'s `image:` at it:
 
 ```console
-$ export IMAGE=ghcr.io/<你的用户名>/cloudflare-quick-tunnel-operator:v0.1.0   # 或 docker.io/<你>/...
+$ export IMAGE=ghcr.io/<your-username>/cloudflare-quick-tunnel-operator:v0.1.0   # or docker.io/<you>/...
 
-# 构建并推送（x86 集群）
+# Build and push (x86 clusters)
 $ docker build -t $IMAGE .
 $ docker push $IMAGE
 
-# 集群是 ARM（如树莓派 / Oracle ARM 免费机）时构建双架构：
+# ARM clusters (Raspberry Pi / free Oracle ARM boxes) — build both arches:
 $ docker buildx build --platform linux/amd64,linux/arm64 -t $IMAGE --push .
 
-# 安装并指向你的镜像
+# Install and point at your image
 $ kubectl apply -f deploy/install.yaml
 $ kubectl -n cloudflare-quick-tunnel-operator set image deploy/cloudflare-quick-tunnel-operator manager=$IMAGE
 
-# 验证
+# Verify
 $ kubectl -n cloudflare-quick-tunnel-operator rollout status deploy/cloudflare-quick-tunnel-operator
 ```
 
-私有 registry 需要拉取凭据：
+Private registries need pull credentials:
 
 ```console
 $ kubectl -n cloudflare-quick-tunnel-operator create secret docker-registry regcred \
-    --docker-server=<registry地址> --docker-username=<用户> --docker-password=<密码>
+    --docker-server=<registry> --docker-username=<user> --docker-password=<password>
 $ kubectl -n cloudflare-quick-tunnel-operator patch deploy cloudflare-quick-tunnel-operator \
     -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"regcred"}]}}}}'
 ```
 
-> 说明：operator 的隧道探活走 API server 的 `pods/proxy` 子资源（RBAC 已含在 install.yaml），标准发行版集群（kubeadm/EKS/GKE/ACK/TKE 等）都支持。若你的平台限制该子资源，日志会持续出现 `tunnel wedged, recycling tunnel pod`，这是已知边界。
+> Note: the operator's tunnel health probe goes through the API server's `pods/proxy` subresource (RBAC included in install.yaml). Standard clusters (kubeadm/EKS/GKE/ACK/TKE/…) support it. If your platform restricts that subresource, you will see repeated `tunnel wedged, recycling tunnel pod` log lines — a known boundary.
 
-不想在远程集群装任何东西也可以：用[本地开发模式](#方式-b本地开发模式免打镜像推荐先体验)把 `KUBECONFIG` 指向远程集群，operator 跑在本机、隧道 Pod 跑在集群里，效果等同（前提是 kubeconfig 身份具备 install.yaml 中 ClusterRole 的权限，云集群的管理员 kubeconfig 天然满足）。
+If you'd rather install nothing in the remote cluster, use [local dev mode](#option-b-local-dev-mode-no-image-needed-recommended-for-a-first-try) with `KUBECONFIG` pointing at the remote cluster: the operator runs on your machine while the tunnel pods run in the cluster (the kubeconfig identity needs the permissions of the ClusterRole in install.yaml; cloud admin kubeconfigs qualify out of the box).
 
-### 方式 B：本地开发模式（免打镜像，推荐先体验）
+### Option B: local dev mode (no image needed — recommended for a first try)
 
-operator 直接跑在你本机上，通过 kubeconfig 连集群：
+The operator runs on your machine and talks to the cluster via kubeconfig:
 
 ```console
 $ make build
 $ ./bin/cloudflare-quick-tunnel-operator
 ```
 
-> 注意：本地模式需要 kubeconfig 里的身份有 Service/Ingress/Deployment/Pod 的操作权限（minikube/kind 默认 admin 没问题）；本机 8080 端口被占的话加 `-metrics-bind-address :18080`。
+> Note: local mode requires the kubeconfig identity to operate Services/Ingresses/Deployments/Pods (the default admin kubeconfig of minikube/kind is fine). If port 8080 is taken on your machine, add `-metrics-bind-address :18080`.
 
-### 验证安装
+### Verify the installation
 
 ```console
 $ kubectl -n cloudflare-quick-tunnel-operator logs deploy/cloudflare-quick-tunnel-operator | head -5
-# 看到 "starting cloudflare-quick-tunnel-operator" 即成功；
-# 集群里没装 Gateway API CRDs 时会多一行 "skipping Gateway API support"，属正常，
-# Service annotation 和 Ingress 模式不受影响。
+# "starting cloudflare-quick-tunnel-operator" means success;
+# without the Gateway API CRDs installed you'll also see
+# "skipping Gateway API support" — that's normal, Service annotation
+# and Ingress modes are unaffected.
 ```
 
-## 2. 使用方式一：Service annotation（最简）
+## 2. Mode 1: Service annotation (simplest)
 
-给任意 Service 打一个 annotation：
+Annotate any Service:
 
 ```console
 $ kubectl annotate svc my-svc quicktunnel.dev/expose=true
 ```
 
-十几秒后 URL 会出现在 annotation 里：
+Within ~15 seconds the URL shows up in an annotation:
 
 ```console
 $ kubectl get svc my-svc -o jsonpath='{.metadata.annotations.quicktunnel\.dev/url}'
@@ -116,25 +119,25 @@ https://quiet-marble-otter.trycloudflare.com
 $ curl https://quiet-marble-otter.trycloudflare.com
 ```
 
-可选微调（都支持）：
+Optional tweaks:
 
 ```yaml
 metadata:
   annotations:
     quicktunnel.dev/expose: "true"
-    quicktunnel.dev/port: "8080"    # 默认取 Service 第一个 port
-    quicktunnel.dev/scheme: "https" # 源站是 https 时（自动加 --no-tls-verify）
+    quicktunnel.dev/port: "8080"    # defaults to the Service's first port
+    quicktunnel.dev/scheme: "https" # for https origins (adds --no-tls-verify)
 ```
 
-取消暴露（隧道 Deployment 自动回收、URL 注解自动清理）：
+Stop exposing (tunnel Deployment is removed and URL annotations cleaned up automatically):
 
 ```console
 $ kubectl annotate svc my-svc quicktunnel.dev/expose-
 ```
 
-## 3. 使用方式二：Ingress（按 host 拆隧道）
+## 3. Mode 2: Ingress (one tunnel per host)
 
-`install.yaml` 已创建 `IngressClass quicktunnel`。每个 host 规则得到一条独立隧道：
+`install.yaml` already created the `IngressClass quicktunnel`. Each host rule gets its own tunnel:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -144,14 +147,14 @@ metadata:
 spec:
   ingressClassName: quicktunnel
   rules:
-    - host: web.demo.local      # → 隧道1，URL 在 quicktunnel.dev/url.web.demo.local
+    - host: web.demo.local      # → tunnel 1, URL in quicktunnel.dev/url.web.demo.local
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service: { name: demo-nginx, port: { number: 80 } }
-    - host: api.demo.local      # → 隧道2，URL 在 quicktunnel.dev/url.api.demo.local
+    - host: api.demo.local      # → tunnel 2, URL in quicktunnel.dev/url.api.demo.local
       http:
         paths:
           - path: /
@@ -163,25 +166,26 @@ spec:
 ```console
 $ kubectl apply -f examples/ingress-demo.yaml
 
-# 所有隧道的公网地址聚合在 status.loadBalancer（external-dns 等工具读这里）：
+# All public addresses are aggregated in status.loadBalancer
+# (this is what external-dns & friends read):
 $ kubectl get ingress demo -o jsonpath='{.status.loadBalancer.ingress[*].hostname}'
 api-xxx.trycloudflare.com web-yyy.trycloudflare.com
 
-# 单个 host 的精确地址：
+# The exact address for one host:
 $ kubectl get ingress demo -o jsonpath='{.metadata.annotations.quicktunnel\.dev/url\.web\.demo\.local}'
 ```
 
-规则里不带 host 的归入默认组（裸 `quicktunnel.dev/url`）；没有规则时 `defaultBackend` 兜底。path 级路由无法支持（每条隧道单 origin），每 host 组取第一个 backend。
+Hostless rules fall into the default group (bare `quicktunnel.dev/url`); `defaultBackend` is the fallback when there are no rules. Path-level routing cannot be honored (each tunnel is a single origin); the first backend of each host group wins.
 
-## 4. 使用方式三：Gateway API
+## 4. Mode 3: Gateway API
 
-先装 CRDs（一次性）：
+Install the CRDs first (one-time):
 
 ```console
 $ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
 ```
 
-`install.yaml` 已创建 `GatewayClass quicktunnel`：
+`install.yaml` already created the `GatewayClass quicktunnel`:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -211,47 +215,47 @@ spec:
 ```console
 $ kubectl apply -f examples/gateway-demo.yaml
 
-# 每个 HTTPRoute 一条隧道；Gateway 汇总其下所有 route 的 URL：
+# One tunnel per HTTPRoute; the Gateway aggregates all route URLs:
 $ kubectl get gateway demo -o jsonpath='{.status.addresses[0].value}'
-quiet-marble-otter.trycloudflare.com      # Hostname 类型不带 scheme，访问时加 https://
+quiet-marble-otter.trycloudflare.com      # Hostname carries no scheme; prepend https://
 
-# route 自身的状态与注解：
+# The route's own status:
 $ kubectl get httproute demo -o jsonpath='{.status.parents[0].conditions[*].type}'
 Accepted ResolvedRefs
 ```
 
-## 5. 日常运维
+## 5. Day-2 operations
 
 ```console
-# 列出所有隧道 Pod（所有暴露方式统一打标）
+# List every tunnel pod (all modes share one label)
 $ kubectl get pods -A -l app.kubernetes.io/managed-by=cloudflare-quick-tunnel-operator
 
-# 看某条隧道的 cloudflared 日志（确认边缘连接数、当前 URL）
+# Inspect one tunnel's cloudflared logs (edge connections, current URL)
 $ kubectl logs <tunnel-pod> | grep -E 'trycloudflare|Registered'
 
-# operator 日志：URL 发布、僵尸回收都有记录
+# Operator logs: URL publications and zombie recycles are all recorded
 $ kubectl -n cloudflare-quick-tunnel-operator logs deploy/cloudflare-quick-tunnel-operator | grep watchdog
 ```
 
-**URL 生命周期**（重要契约）：URL 与隧道 Pod 生命周期绑定，Pod 重建（节点排水、镜像更新、探活回收）后 URL 必然变化，annotation/status 会在几秒内自动更新。**消费方必须动态读取**，不要固化到配置里。
+**URL lifecycle** (the important contract): a URL is tied to its tunnel pod's lifetime. Whenever the pod is rebuilt (node drain, image update, health-probe recycle) the hostname changes, and annotations/status catch up within seconds. **Consumers must read the URL dynamically** — never bake it into configuration.
 
-## 6. 排障速查
+## 6. Troubleshooting quick reference
 
-| 症状 | 原因与处理 |
+| Symptom | Cause & fix |
 |---|---|
-| annotation 迟迟没有 URL | 等 10-20s；查隧道 Pod 是否 Running（镜像拉取慢）；`kubectl describe pod` |
-| curl 返回 530 | 多半是 curl 了已重建 Pod 的旧 URL——重新读 annotation；或后端 Service 端口不对 |
-| 偶发 429 | 单隧道 200 并发在途请求上限（Quick Tunnel 硬限制） |
-| SSE / EventSource 失效 | Quick Tunnel 不支持 SSE，属平台限制 |
-| 本地模式起不来 `bind: address already in use` | 加 `-metrics-bind-address :18080` |
-| 日志出现 `tunnel wedged, recycling tunnel pod` | 正常自愈：僵尸隧道被探测到并重建，URL 随之更新 |
-| Ingress/Gateway 用不了 | Gateway API 模式需先装 CRDs（见第 4 节）；Ingress 不需要 |
+| No URL in annotations after a while | Wait 10–20s; check the tunnel pod is Running (slow image pull); `kubectl describe pod` |
+| curl returns 530 | Usually a stale URL from a rebuilt pod — re-read the annotation; or the backend Service port is wrong |
+| Occasional 429 | 200 concurrent in-flight request limit per tunnel (hard Quick Tunnel limit) |
+| SSE / EventSource broken | Quick Tunnels do not support SSE — platform limitation |
+| Local mode fails with `bind: address already in use` | Add `-metrics-bind-address :18080` |
+| Logs show `tunnel wedged, recycling tunnel pod` | Normal self-healing: a zombie tunnel was detected and rebuilt; the URL follows |
+| Ingress/Gateway mode does nothing | Gateway API mode needs the CRDs (section 4); Ingress does not |
 
-## 7. 卸载
+## 7. Uninstall
 
 ```console
-$ kubectl delete -f deploy/install.yaml        # operator、RBAC、IngressClass、GatewayClass
-$ kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml  # 可选
+$ kubectl delete -f deploy/install.yaml        # operator, RBAC, IngressClass, GatewayClass
+$ kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml  # optional
 ```
 
-各隧道 Deployment 通过 ownerReference 挂在对应 Service/Ingress/HTTPRoute 上，Kubernetes GC 会自动回收，无需手动清理。
+Tunnel Deployments are ownerReferenced to their Service/Ingress/HTTPRoute, so Kubernetes GC removes them automatically — no manual cleanup needed.

@@ -1,12 +1,14 @@
 # cloudflare-quick-tunnel-operator
 
-把 Kubernetes 集群里的 Service 通过 **Cloudflare Quick Tunnel**（`trycloudflare.com`）暴露到公网——**不需要 Cloudflare 账号、不需要域名、不需要公网 IP、不需要开任何入站端口**。
+**English** | [简体中文](README.zh-CN.md)
 
-> 📖 完整的安装与使用教程见 **[docs/tutorial.md](docs/tutorial.md)**（三种暴露方式、运维命令、排障速查、卸载）。
+Expose Kubernetes Services to the public internet via **Cloudflare Quick Tunnels** (`trycloudflare.com`) — **no Cloudflare account, no domain, no public IP, no inbound ports**.
 
-支持三种暴露方式：Service annotation（最简）、Ingress（`ingressClassName: quicktunnel`，按 host 拆隧道）、Gateway API（`gatewayClassName: quicktunnel`）。
+> 📖 Full installation and usage tutorial: **[docs/tutorial.md](docs/tutorial.md)** (all three exposure modes, day-2 commands, troubleshooting, uninstall). Also available in [Chinese](docs/tutorial.zh-CN.md).
 
-给 Service 打一个 annotation，几秒钟后 operator 会把公网 URL 写回来：
+Three exposure modes are supported: Service annotation (simplest), Ingress (`ingressClassName: quicktunnel`, one tunnel per host), and Gateway API (`gatewayClassName: quicktunnel`).
+
+Annotate a Service, and a few seconds later the operator writes the public URL back:
 
 ```yaml
 apiVersion: v1
@@ -27,72 +29,72 @@ $ kubectl get svc demo-nginx -o jsonpath='{.metadata.annotations.quicktunnel\.de
 https://quiet-marble-otter.trycloudflare.com
 ```
 
-## 工作原理
+## How it works
 
 ```
-                    ┌─────────────────────────── Kubernetes 集群 ───────────────────────────┐
-                    │                                                                        │
-  用户浏览器        │  ┌────────────┐  创建   ┌─────────────────┐   转发    ┌────────────┐    │
-──────────────┐    │  │  Service    │◄───────│ cloudflared Pod │──────────►│  应用 Pod   │    │
-              │    │  │ (annotation │        │ (每 Service 一个)│           └────────────┘    │
-              ▼    │  │  + URL 回写) │        └────────┬────────┘                             │
-   Cloudflare 边缘 ◄┼───────────────────────────────────┘ 出站隧道（outbound-only）           │
-                    │        ▲ 采集日志里的 URL / 探活 / 僵尸重启                               │
-                    │  ┌─────┴──────────────┐                                             │
-                    │  │ cloudflare-quick-tunnel-operator │                                             │
-                    │  └────────────────────┘                                             │
-                    └────────────────────────────────────────────────────────────────────────┘
+                    ┌───────────────────────── Kubernetes cluster ─────────────────────────┐
+                    │                                                                       │
+  user browser      │  ┌────────────┐ creates ┌─────────────────┐   forwards ┌───────────┐  │
+──────────────┐    │  │  Service    │◄───────│ cloudflared Pod │───────────►│  app Pod  │  │
+              │    │  │ (annotation │        │ (one per tunnel)│            └───────────┘  │
+              ▼    │  │  + URL back)│        └────────┬────────┘                           │
+ Cloudflare edge ◄──┼──────────────────────────────────┘ outbound-only tunnel               │
+                    │        ▲ harvest URL from logs / probe health / recycle zombies      │
+                    │  ┌─────┴───────────────────┐                                       │
+                    │  │ cloudflare-quick-tunnel-operator │                                 │
+                    │  └─────────────────────────┘                                       │
+                    └───────────────────────────────────────────────────────────────────────┘
 ```
 
-1. operator watch 带 `quicktunnel.dev/expose: "true"` 的 Service，为每个 Service 创建一个 `cloudflared tunnel --url ...` 的 Deployment（ownerReference 挂在 Service 上，随 Service 删除自动回收）。
-2. 后台 watchdog 轮询 tunnel Pod 的日志，提取分配到的 `*.trycloudflare.com` URL，patch 回 Service 的 `quicktunnel.dev/url` annotation。
-3. watchdog 持续探测 cloudflared 的 `/metrics`（`cloudflared_tunnel_ha_connections`）。Quick Tunnel 有一种常见的"僵尸态"：进程活着但边缘连接全断、不会自愈——探测到后主动删 Pod 让 Deployment 重建，新 URL 会自动回写。
+1. The operator watches Services annotated with `quicktunnel.dev/expose: "true"` and creates a `cloudflared tunnel --url ...` Deployment per exposed owner (via ownerReference, so it is garbage-collected with the owner).
+2. A background watchdog polls the tunnel pod's logs, extracts the assigned `*.trycloudflare.com` URL, and patches it back into the owner's `quicktunnel.dev/url` annotation.
+3. The watchdog keeps probing cloudflared's `/metrics` (`cloudflared_tunnel_ha_connections`). Quick Tunnels have a known "zombie" mode — the process stays alive with zero edge connections and never recovers — and the operator recycles the pod when it detects it. The new URL is republished automatically.
 
-## Annotation 参考
+## Annotation reference
 
-| annotation | 说明 | 默认值 |
+| Annotation | Description | Default |
 |---|---|---|
-| `quicktunnel.dev/expose` | `"true"` 开启暴露 | — |
-| `quicktunnel.dev/port` | 源站端口 | Service 的第一个 port |
-| `quicktunnel.dev/scheme` | `http` / `https`（https 会加 `--no-tls-verify`） | `http` |
-| `quicktunnel.dev/url` | **operator 写入**：当前公网 URL | — |
-| `quicktunnel.dev/url-updated-at` | **operator 写入**：URL 更新时间 | — |
+| `quicktunnel.dev/expose` | `"true"` opts a Service in | — |
+| `quicktunnel.dev/port` | Origin port | the Service's first port |
+| `quicktunnel.dev/scheme` | `http` / `https` (https adds `--no-tls-verify`) | `http` |
+| `quicktunnel.dev/url` | **written by the operator**: current public URL | — |
+| `quicktunnel.dev/url-updated-at` | **written by the operator**: last URL update time | — |
 
-## 快速开始（minikube）
+## Quick start (minikube)
 
 ```console
 $ minikube start
 $ make build
-$ make run                     # 本地跑 operator（用当前 kubeconfig，免打镜像）
-# 另开一个终端：
+$ make run                     # run the operator locally against the current kubeconfig
+# in another terminal:
 $ kubectl apply -f examples/demo.yaml
 $ kubectl get svc demo-nginx -o jsonpath='{.metadata.annotations.quicktunnel\.dev/url}'
 https://quiet-marble-otter.trycloudflare.com
 $ curl https://quiet-marble-otter.trycloudflare.com
 ```
 
-集群内部署：
+Deploying in-cluster:
 
 ```console
 $ make minikube-load          # docker build + minikube image load
 $ make deploy                 # kubectl apply -f deploy/install.yaml
 ```
 
-minikube 用户可以 `KUBECTL="minikube kubectl --" make deploy`。
+minikube users without a standalone kubectl can use `KUBECTL="minikube kubectl --" make deploy`.
 
-## Gateway API 支持
+## Gateway API support
 
-除了 Service annotation，也支持标准 [Gateway API](https://gateway-api.sigs.k8s.io/)（需要先装 CRDs）：
+The standard [Gateway API](https://gateway-api.sigs.k8s.io/) is also supported (CRDs required):
 
 ```console
 $ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
 ```
 
-`deploy/install.yaml` 自带 `GatewayClass quicktunnel`（controllerName `quicktunnel.dev/gateway`）。映射关系：
+`deploy/install.yaml` ships a `GatewayClass quicktunnel` (controllerName `quicktunnel.dev/gateway`). The mapping:
 
-- **HTTPRoute = 一条隧道**：attach 到 quicktunnel Gateway 的每个 HTTPRoute，取其第一条规则的第一个 Service backendRef 建一条 tunnel，URL 写到 route 的 `quicktunnel.dev/url` annotation 和 route status（Accepted / ResolvedRefs）；
-- **Gateway = URL 聚合器**：其下所有 route 的 URL 汇总进 `status.addresses`，有 URL 后 Programmed 变 True——这是读地址的"官方"位置；
-- **hostnames / path 匹配不生效**：trycloudflare.com 域名是随机分配的，无法承诺自定义主机名；多条 rule 也只取第一条（quick tunnel 单 origin 限制）。
+- **HTTPRoute = one tunnel**: each HTTPRoute attached to a quicktunnel Gateway gets a tunnel targeting the first Service backendRef of its first rule; the URL surfaces on the route's `quicktunnel.dev/url` annotation and route status (Accepted / ResolvedRefs);
+- **Gateway = URL aggregator**: the URLs of all attached routes are collected into `status.addresses`, and the Gateway turns Programmed once at least one URL exists — this is the "official" place to read addresses;
+- **hostname / path matches are not honored**: trycloudflare.com names are random and cannot serve custom hostnames; only the first rule applies (a quick tunnel is a single origin).
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -121,19 +123,19 @@ spec:
 
 ```console
 $ kubectl get gateway demo -o jsonpath='{.status.addresses[0].value}'
-quiet-marble-otter.trycloudflare.com    # Hostname 类型不带 scheme，访问时加 https://
+quiet-marble-otter.trycloudflare.com    # Hostname addresses carry no scheme; prepend https://
 ```
 
-完整示例见 `examples/gateway-demo.yaml`。若集群未装 Gateway API CRDs，operator 会跳过 Gateway API 支持并打日志提示，Service annotation 模式不受影响。
+See `examples/gateway-demo.yaml` for a complete example. If the Gateway API CRDs are not installed, the operator logs a notice and skips Gateway API support; Service annotation and Ingress modes are unaffected.
 
-## Ingress 支持
+## Ingress support
 
-传统 Ingress 也支持（`deploy/install.yaml` 自带 `IngressClass quicktunnel`）。映射关系：
+Classic Ingress is supported too (`deploy/install.yaml` ships an `IngressClass quicktunnel`). The mapping:
 
-- **按 host 拆分隧道**：Ingress 规则按 host 分组，每个 host 一条独立隧道（URL 各自独立）；无 host 的规则共用一条，`defaultBackend` 兜底；
-- 每个 host 组取**第一条规则第一个 Service backend**（path 级路由无法支持，单 origin 限制）；
-- URL 写到 Ingress 的 `quicktunnel.dev/url.<host>` annotation（无 host 组用裸 `quicktunnel.dev/url`），并聚合进 **`status.loadBalancer.ingress`**（external-dns 等标准工具读这里，Hostname 不带 scheme）；
-- trycloudflare.com 的随机域名**无法真正 serve 规则里的自定义 host**——host 只作为分组和拆隧道的维度。
+- **One tunnel per host**: Ingress rules are grouped by host, and each host gets its own tunnel (and URL); hostless rules share one, with `defaultBackend` as fallback;
+- each host group uses the **first Service backend of its first rule** (path-level routing cannot be honored — single origin);
+- URLs land on the Ingress's `quicktunnel.dev/url.<host>` annotations (bare `quicktunnel.dev/url` for the hostless group) and are aggregated into **`status.loadBalancer.ingress`** — the field standard tooling such as external-dns reads (Hostname carries no scheme);
+- the random trycloudflare.com hostname **cannot actually serve the rule's own host** — hosts are purely the grouping/tunnel-splitting dimension.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -143,7 +145,7 @@ metadata:
 spec:
   ingressClassName: quicktunnel
   rules:
-    - host: web.demo.local        # → 一条隧道 + quicktunnel.dev/url.web.demo.local
+    - host: web.demo.local        # → tunnel 1 + quicktunnel.dev/url.web.demo.local
       http:
         paths:
           - path: /
@@ -152,7 +154,7 @@ spec:
               service:
                 name: demo-nginx
                 port: { number: 80 }
-    - host: api.demo.local        # → 另一条隧道 + quicktunnel.dev/url.api.demo.local
+    - host: api.demo.local        # → tunnel 2 + quicktunnel.dev/url.api.demo.local
       http:
         paths:
           - path: /
@@ -168,33 +170,33 @@ $ kubectl get ingress demo -o jsonpath='{.status.loadBalancer.ingress[*].hostnam
 api-xxx.trycloudflare.com web-yyy.trycloudflare.com
 ```
 
-完整示例 `examples/ingress-demo.yaml`。
+Full example: `examples/ingress-demo.yaml`.
 
-## 已知限制（来自 Quick Tunnel 本身）
+## Known limitations (inherent to Quick Tunnels)
 
-- **URL 与 Pod 生命周期绑定**：tunnel Pod 重启后域名必然变化，annotation 会自动更新，但任何把 URL 固化到配置里的用法都会失效。
-- **单隧道 200 并发在途请求**，超出返回 429；适合 dev/demo，不适合压测和生产。
-- **不支持 SSE**（Server-Sent Events）。
-- **无 SLA**：Cloudflare 可能掐掉空闲隧道；本 operator 通过探活 + 自动重建缓解，但这是 best-effort。
-- 所有流量经过 Cloudflare 边缘，注意隐私与合规。
+- **URLs are tied to the pod lifecycle**: the hostname always changes when a tunnel pod restarts. Annotations are updated automatically, but anything that hard-codes a URL into configuration will break.
+- **200 concurrent in-flight requests per tunnel** — extra requests get 429. Fine for dev/demo, not for load tests or production.
+- **SSE (Server-Sent Events) is not supported.**
+- **No SLA**: Cloudflare may drop idle tunnels. The operator mitigates this with probing and automatic rebuilds, but it remains best-effort.
+- All traffic traverses Cloudflare's edge — consider privacy and compliance.
 
-要稳定域名和生产流量，请换命名隧道（需要账号）：官方 `cloudflared` 或 [STRRL/cloudflare-tunnel-ingress-controller](https://github.com/STRRL/cloudflare-tunnel-ingress-controller)。
+For stable hostnames and production traffic, switch to named tunnels (requires an account): official `cloudflared`, or [STRRL/cloudflare-tunnel-ingress-controller](https://github.com/STRRL/cloudflare-tunnel-ingress-controller).
 
-## 开发
+## Development
 
 ```console
-$ make test    # 单测：reconcile 语义、URL 提取、僵尸探活
+$ make test    # unit tests: reconcile semantics, URL extraction, zombie probing
 $ make vet
 ```
 
-- Go 1.24 + controller-runtime v0.21，无 CRD，纯 annotation 驱动。
-- cloudflared 镜像版本在 `internal/controller/annotations.go` 的 `DefaultCloudflaredImage` 固定，可用 `-cloudflared-image` 覆盖。
+- Go 1.24 + controller-runtime v0.22, no CRDs — purely annotation- and class-driven.
+- The cloudflared image is pinned in `DefaultCloudflaredImage` (`internal/controller/annotations.go`); override with `-cloudflared-image`.
 
 ## Roadmap
 
-- [x] Gateway API 支持（`gatewayClassName: quicktunnel`，HTTPRoute = 隧道，Gateway.status.addresses 聚合 URL）
-- [x] Ingress 支持（`ingressClassName: quicktunnel`，按 host 拆分多隧道，status.loadBalancer 聚合 URL）
-- [ ] operator 自身 metrics（暴露中的隧道数、URL 更新计数）
+- [x] Gateway API support (`gatewayClassName: quicktunnel`, HTTPRoute = tunnel, Gateway.status.addresses aggregates URLs)
+- [x] Ingress support (`ingressClassName: quicktunnel`, one tunnel per host, status.loadBalancer aggregates URLs)
+- [ ] Operator metrics (tunnels exposed, URL update counts)
 
 ## License
 
