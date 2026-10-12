@@ -235,6 +235,8 @@ quiet-marble-otter.trycloudflare.com    # Hostname 不带 scheme，访问时加 
 
 ## 同类项目
 
+本 operator 刻意**不引入任何自有 CRD**——暴露方式全部用内置 API 表达（Service 注解、`ingressClassName`、`gatewayClassName`）。如果你想要不同的取舍：
+
 - **稳定域名 / 生产流量**：[STRRL/cloudflare-tunnel-ingress-controller](https://github.com/STRRL/cloudflare-tunnel-ingress-controller)——基于*命名* Cloudflare Tunnel 的 Ingress controller；需要账号、Cloudflare 域名和 API token，但能给固定域名、隧道支持多副本。官方 `cloudflared` 也可用。
 - **CRD 方式管理隧道**：[adyanth/cloudflare-operator](https://github.com/adyanth/cloudflare-operator) 通过 `Tunnel` CRD 管理 Cloudflare Tunnel。
 - **私有暴露（仅 tailnet）**：[Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-operator/) 把 Service 和 Ingress 暴露给你的 tailnet 而不是公网。

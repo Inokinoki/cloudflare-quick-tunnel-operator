@@ -247,6 +247,10 @@ path matches are not honored (same single-origin reasoning as Ingress).
 
 ## Alternatives
 
+This operator deliberately adds **no CRDs of its own** — exposure is declared
+with built-in APIs only (Service annotations, `ingressClassName`,
+`gatewayClassName`). If you prefer different trade-offs:
+
 - **Stable hostnames / production traffic**: [STRRL/cloudflare-tunnel-ingress-controller](https://github.com/STRRL/cloudflare-tunnel-ingress-controller) — Ingress controller over *named* Cloudflare Tunnels; needs an account, a Cloudflare domain and an API token, but gives fixed hostnames and multi-replica tunnels. Plain `cloudflared` also works.
 - **CRD-based tunnel management**: [adyanth/cloudflare-operator](https://github.com/adyanth/cloudflare-operator) manages Cloudflare Tunnels through a `Tunnel` CRD.
 - **Private exposure (tailnet-only)**: the [Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-operator/) exposes Services and Ingresses to your tailnet instead of the public internet.
