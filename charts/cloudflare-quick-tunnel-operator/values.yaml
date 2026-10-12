@@ -3,11 +3,9 @@
 replicaCount: 1
 
 image:
-  # No public image is published yet — build and load/push your own, e.g.:
-  #   make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev
-  #   or push to a registry: ghcr.io/<you>/cloudflare-quick-tunnel-operator:v0.1.0
-  repository: cloudflare-quick-tunnel-operator
-  tag: dev
+  # Published by CI on v* tags; empty tag falls back to the chart appVersion.
+  repository: ghcr.io/inokinoki/cloudflare-quick-tunnel-operator
+  tag: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
