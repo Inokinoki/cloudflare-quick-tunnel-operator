@@ -1,6 +1,7 @@
 # All-in-one installation for cloudflare-quick-tunnel-operator.
-# Requires an image named cloudflare-quick-tunnel-operator:dev loaded into the cluster
-# (e.g. `make minikube-load`), or edit the image below.
+# Uses the published GHCR image; to run a locally built image instead,
+# `make minikube-load` and change the image below to
+# cloudflare-quick-tunnel-operator:dev.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -118,7 +119,7 @@ spec:
       serviceAccountName: cloudflare-quick-tunnel-operator
       containers:
         - name: manager
-          image: cloudflare-quick-tunnel-operator:dev
+          image: ghcr.io/inokinoki/cloudflare-quick-tunnel-operator:v0.1.0
           args:
             - --leader-elect
           ports:

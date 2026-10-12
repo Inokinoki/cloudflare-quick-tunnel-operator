@@ -15,8 +15,8 @@
 ## 0. 前置条件
 
 - 一个 Kubernetes 集群（minikube / kind / 云集群均可）+ `kubectl`
-- 想容器化部署：Docker（构建镜像用）
-- 想本地开发模式：Go 1.24+（本仓库 Makefile 会自动探测 `~/go/bin/go`）
+- Helm（推荐安装方式）
+- 本地开发模式：Go 1.24+（本仓库 Makefile 会自动探测 `~/go/bin/go`）；只有自己构建镜像才需要 Docker
 
 集群**不需要**公网 IP、不需要开放任何入站端口——quick tunnel 是纯出站连接。
 
@@ -25,50 +25,38 @@
 ### 方式 A：集群内部署（原始 manifest）
 
 ```console
-$ git clone https://github.com/Inokinoki/cloudflare-quick-tunnel-operator.git && cd cloudflare-quick-tunnel-operator
-
-# 构建镜像（或 docker buildx 指定多架构）
-$ make docker-build                          # → cloudflare-quick-tunnel-operator:dev
-
-# 把镜像塞进集群：
-#   minikube:
-$ minikube image load cloudflare-quick-tunnel-operator:dev
-#   kind:
-$ kind load docker-image cloudflare-quick-tunnel-operator:dev --name <cluster名>
-
-# 一键安装：Namespace + ServiceAccount + ClusterRole + operator Deployment
-#           + IngressClass quicktunnel + GatewayClass quicktunnel
-$ kubectl apply -f deploy/install.yaml
+# 无需构建——install.yaml 直接使用已发布的 GHCR 镜像：
+$ kubectl apply -f https://raw.githubusercontent.com/Inokinoki/cloudflare-quick-tunnel-operator/main/deploy/install.yaml
 
 # 等待就绪
 $ kubectl -n cloudflare-quick-tunnel-operator wait deploy/cloudflare-quick-tunnel-operator --for=condition=Available --timeout=90s
 ```
 
-minikube 用户如果没装独立 kubectl，可以 `KUBECTL="minikube kubectl --" make deploy`。
+想用自己的构建？`make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev`（kind 用 `kind load docker-image …`），把 Deployment 镜像指到 `cloudflare-quick-tunnel-operator:dev` 后 apply 本地的 `deploy/install.yaml`。
 
 ### 方式 B：Helm（推荐）
 
 ```console
-# 先构建镜像（尚无公开镜像），加载进集群或推到 registry：
-$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev
-
-$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+# 从已发布的 OCI chart 安装——不用 clone、不用构建：
+$ helm install cloudflare-quick-tunnel-operator \
+    oci://ghcr.io/inokinoki/charts/cloudflare-quick-tunnel-operator --version 0.1.0 \
     -n cloudflare-quick-tunnel-operator --create-namespace
 
-# 使用 registry 镜像：
+# 或从本地 checkout：
+$ git clone https://github.com/Inokinoki/cloudflare-quick-tunnel-operator.git && cd cloudflare-quick-tunnel-operator
 $ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
-    -n cloudflare-quick-tunnel-operator --create-namespace \
-    --set image.repository=ghcr.io/<你的用户名>/cloudflare-quick-tunnel-operator \
-    --set image.tag=v0.1.0
+    -n cloudflare-quick-tunnel-operator --create-namespace
 ```
+
+两种方式默认使用已发布的 GHCR 镜像（多架构 amd64/arm64；tag 有 `0.1.0` / `0.1` / `latest`）；只有自己的构建才需要 `--set image.repository=… --set image.tag=…`。
 
 Chart 包含 operator Deployment、RBAC（含 leader election 的 lease 权限）、`quicktunnel` IngressClass 和 GatewayClass。可调项见 `charts/cloudflare-quick-tunnel-operator/values.yaml`。卸载：`helm uninstall cloudflare-quick-tunnel-operator -n cloudflare-quick-tunnel-operator`。
 
 > 从 `deploy/install.yaml` 迁移到 Helm？先删除已创建的 `IngressClass quicktunnel` / `GatewayClass quicktunnel`——Helm 拒绝收编不属于它的存量资源。
 
-### 远程/云集群安装（需要推镜像到 registry）
+### 远程/云集群
 
-远程集群没法 side-load 镜像，把构建好的镜像推到集群能拉取的 registry（Docker Hub / GHCR / 私有 registry），然后改一下 `deploy/install.yaml` 里的 `image:` 即可：
+已发布的镜像是公开且多架构（amd64/arm64）的，上面两种安装方式在远程集群上开箱即用。只有 fork 或自定义构建才需要自己的 registry——推上去后把 chart（`--set image.repository=… --set image.tag=…`）或 `deploy/install.yaml` 指过去即可：
 
 ```console
 $ export IMAGE=ghcr.io/<你的用户名>/cloudflare-quick-tunnel-operator:v0.1.0   # 或 docker.io/<你>/...

@@ -15,8 +15,8 @@ A hands-on tutorial; every command has been verified on minikube + Kubernetes v1
 ## 0. Prerequisites
 
 - A Kubernetes cluster (minikube / kind / any cloud cluster) + `kubectl`
-- In-cluster deployment: Docker (to build the image)
-- Local dev mode: Go 1.24+ (the Makefile auto-detects `~/go/bin/go`)
+- Helm, for the recommended install
+- Local dev mode: Go 1.24+ (the Makefile auto-detects `~/go/bin/go`); Docker only if you build your own image
 
 The cluster does **not** need a public IP or any open inbound ports — quick tunnels are outbound-only.
 
@@ -25,43 +25,32 @@ The cluster does **not** need a public IP or any open inbound ports — quick tu
 ### Option A: in-cluster deployment (raw manifest)
 
 ```console
-$ git clone https://github.com/Inokinoki/cloudflare-quick-tunnel-operator.git && cd cloudflare-quick-tunnel-operator
-
-# Build the image (use docker buildx for multi-arch)
-$ make docker-build                          # → cloudflare-quick-tunnel-operator:dev
-
-# Load the image into the cluster:
-#   minikube:
-$ minikube image load cloudflare-quick-tunnel-operator:dev
-#   kind:
-$ kind load docker-image cloudflare-quick-tunnel-operator:dev --name <cluster>
-
-# One-shot install: Namespace + ServiceAccount + ClusterRole + operator Deployment
-#                    + IngressClass quicktunnel + GatewayClass quicktunnel
-$ kubectl apply -f deploy/install.yaml
+# Nothing to build — install.yaml uses the published GHCR image:
+$ kubectl apply -f https://raw.githubusercontent.com/Inokinoki/cloudflare-quick-tunnel-operator/main/deploy/install.yaml
 
 # Wait for readiness
 $ kubectl -n cloudflare-quick-tunnel-operator wait deploy/cloudflare-quick-tunnel-operator --for=condition=Available --timeout=90s
 ```
 
-minikube users without a standalone kubectl can use `KUBECTL="minikube kubectl --" make deploy`.
+Prefer your own build? `make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev` (or `kind load docker-image …`), point the Deployment image at `cloudflare-quick-tunnel-operator:dev`, then apply the local `deploy/install.yaml`.
 
 ### Option B: Helm (recommended)
 
 ```console
-# Build the image first (no public image is published yet), then load it
-# into the cluster or push it to a registry:
-$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev
-
-$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+# From the published OCI chart — no clone, no build:
+$ helm install cloudflare-quick-tunnel-operator \
+    oci://ghcr.io/inokinoki/charts/cloudflare-quick-tunnel-operator --version 0.1.0 \
     -n cloudflare-quick-tunnel-operator --create-namespace
 
-# With a registry image:
+# Or from a local checkout:
+$ git clone https://github.com/Inokinoki/cloudflare-quick-tunnel-operator.git && cd cloudflare-quick-tunnel-operator
 $ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
-    -n cloudflare-quick-tunnel-operator --create-namespace \
-    --set image.repository=ghcr.io/<you>/cloudflare-quick-tunnel-operator \
-    --set image.tag=v0.1.0
+    -n cloudflare-quick-tunnel-operator --create-namespace
 ```
+
+Both default to the published GHCR image (multi-arch amd64/arm64; tags
+`0.1.0` / `0.1` / `latest`); use `--set image.repository=… --set image.tag=…`
+only for your own builds.
 
 The chart ships the operator Deployment, RBAC (including leader-election
 leases), the `quicktunnel` IngressClass and GatewayClass. Toggles and
@@ -72,9 +61,12 @@ Uninstall: `helm uninstall cloudflare-quick-tunnel-operator -n cloudflare-quick-
 > `IngressClass quicktunnel` / `GatewayClass quicktunnel` first — Helm
 > refuses to adopt resources it does not own.
 
-### Remote / cloud clusters (push the image to a registry)
+### Remote / cloud clusters
 
-Remote clusters cannot side-load images. Push the built image to a registry the cluster can pull from (Docker Hub / GHCR / private), then point `deploy/install.yaml`'s `image:` at it:
+The published image is public and multi-arch (amd64/arm64), so both install
+modes above work on remote clusters as-is. You only need your own registry
+for a fork or custom build — push it, then point the chart
+(`--set image.repository=… --set image.tag=…`) or `deploy/install.yaml` at it:
 
 ```console
 $ export IMAGE=ghcr.io/<your-username>/cloudflare-quick-tunnel-operator:v0.1.0   # or docker.io/<you>/...

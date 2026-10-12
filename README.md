@@ -12,24 +12,22 @@ Expose Kubernetes Services to the public internet via **Cloudflare Quick Tunnels
 
 ## Quick start
 
-**Prerequisites**: a Kubernetes cluster with `kubectl` and `helm`, plus Docker
-to build the operator image (until a public image is published). No Cloudflare
-account is needed — ever.
+**Prerequisites**: a Kubernetes cluster with `kubectl` and `helm`. No
+Cloudflare account is needed — ever.
 
-Install with Helm, then expose a demo nginx through an Ingress:
+Install the published chart, then expose a demo nginx through an Ingress:
 
 ```console
-# 1. Build the operator image (no public image is published yet) and load it
-$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev
-
-# 2. Install via Helm (creates the quicktunnel IngressClass & GatewayClass)
-$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+# 1. Install via Helm from the OCI registry
+#    (creates the quicktunnel IngressClass & GatewayClass)
+$ helm install cloudflare-quick-tunnel-operator \
+    oci://ghcr.io/inokinoki/charts/cloudflare-quick-tunnel-operator --version 0.1.0 \
     -n cloudflare-quick-tunnel-operator --create-namespace
 
-# 3. Expose a demo nginx through a hostless Ingress
+# 2. Expose a demo nginx through a hostless Ingress
 $ kubectl apply -f examples/ingress-hostless.yaml
 
-# 4. Read the public URL from the Ingress
+# 3. Read the public URL from the Ingress
 $ kubectl get ingress demo-nginx
 NAME         CLASS         HOSTS   ADDRESS                                  PORTS   AGE
 demo-nginx   quicktunnel   *       quiet-marble-otter.trycloudflare.com     80      30s
@@ -37,9 +35,8 @@ demo-nginx   quicktunnel   *       quiet-marble-otter.trycloudflare.com     80  
 $ curl https://quiet-marble-otter.trycloudflare.com
 ```
 
-On a remote/cloud cluster, push the image to a registry and add
-`--set image.repository=<registry>/<image> --set image.tag=<tag>` to the
-helm install command — see the tutorial for details.
+Images are multi-arch (linux/amd64 + linux/arm64) and pullable anonymously
+from GHCR, so this works on remote and cloud clusters as-is.
 
 ## How it works
 
@@ -70,32 +67,32 @@ helm install command — see the tutorial for details.
 ### Helm (recommended)
 
 ```console
-$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev   # or push to a registry
-$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+# From the published OCI chart — no clone, no build:
+$ helm install cloudflare-quick-tunnel-operator \
+    oci://ghcr.io/inokinoki/charts/cloudflare-quick-tunnel-operator --version 0.1.0 \
     -n cloudflare-quick-tunnel-operator --create-namespace
 
-# Using a registry image:
+# Or from a local checkout (e.g. when hacking on the chart):
 $ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
-    -n cloudflare-quick-tunnel-operator --create-namespace \
-    --set image.repository=ghcr.io/<you>/cloudflare-quick-tunnel-operator \
-    --set image.tag=v0.1.0
+    -n cloudflare-quick-tunnel-operator --create-namespace
 ```
 
-The chart ships the operator Deployment, RBAC (including leader-election
-leases), and the `quicktunnel` IngressClass & GatewayClass — each toggleable
-via `charts/cloudflare-quick-tunnel-operator/values.yaml`.
+Both use the published GHCR image by default (multi-arch amd64/arm64, tagged
+`0.1.0` / `0.1` / `latest`); pass `--set image.repository=… --set image.tag=…`
+only to use your own build. The chart ships the operator Deployment, RBAC
+(including leader-election leases), and the `quicktunnel` IngressClass &
+GatewayClass — each toggleable via `charts/cloudflare-quick-tunnel-operator/values.yaml`.
 
 ### Raw manifest
 
 ```console
-$ make minikube-load          # docker build + minikube image load
-$ make deploy                 # kubectl apply -f deploy/install.yaml
+$ kubectl apply -f deploy/install.yaml    # uses the published GHCR image
 ```
 
-Equivalent to the chart; minikube users without a standalone kubectl can use
-`KUBECTL="minikube kubectl --" make deploy`. Migrating from the manifest to
-Helm? Delete the previously created IngressClass/GatewayClass first — Helm
-refuses to adopt resources it does not own.
+To run a locally built image instead: `make minikube-load`, then point the
+Deployment at `cloudflare-quick-tunnel-operator:dev`. Migrating from the
+manifest to Helm? Delete the previously created IngressClass/GatewayClass
+first — Helm refuses to adopt resources it does not own.
 
 ### Local dev mode
 
@@ -270,8 +267,8 @@ $ make vet
 - [x] Gateway API support (`gatewayClassName: quicktunnel`, HTTPRoute = tunnel, Gateway.status.addresses aggregates URLs)
 - [x] Ingress support (`ingressClassName: quicktunnel`, one tunnel per host, status.loadBalancer aggregates URLs)
 - [x] Helm chart
+- [x] Publish images and the Helm chart to a public registry (GHCR / OCI) via CI
 - [ ] Operator metrics (tunnels exposed, URL update counts)
-- [ ] Publish images and the Helm chart to a public registry (GHCR / OCI) via CI
 
 ## License
 

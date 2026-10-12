@@ -12,22 +12,20 @@
 
 ## 快速开始
 
-**前置条件**：一个 Kubernetes 集群 + `kubectl` + `helm`，以及构建 operator 镜像用的 Docker（在公开镜像发布之前）。**全程不需要 Cloudflare 账号。**
+**前置条件**：一个 Kubernetes 集群 + `kubectl` + `helm`。**全程不需要 Cloudflare 账号。**
 
-Helm 安装，再用一条 Ingress 暴露 demo nginx：
+安装已发布的 chart，再用一条 Ingress 暴露 demo nginx：
 
 ```console
-# 1. 构建 operator 镜像（尚无公开镜像）并加载进集群
-$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev
-
-# 2. Helm 安装（会创建 quicktunnel IngressClass 和 GatewayClass）
-$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+# 1. 从 OCI registry 安装（会创建 quicktunnel IngressClass 和 GatewayClass）
+$ helm install cloudflare-quick-tunnel-operator \
+    oci://ghcr.io/inokinoki/charts/cloudflare-quick-tunnel-operator --version 0.1.0 \
     -n cloudflare-quick-tunnel-operator --create-namespace
 
-# 3. 用一条无 host 规则的 Ingress 暴露 demo nginx
+# 2. 用一条无 host 规则的 Ingress 暴露 demo nginx
 $ kubectl apply -f examples/ingress-hostless.yaml
 
-# 4. 从 Ingress 读公网 URL
+# 3. 从 Ingress 读公网 URL
 $ kubectl get ingress demo-nginx
 NAME         CLASS         HOSTS   ADDRESS                                  PORTS   AGE
 demo-nginx   quicktunnel   *       quiet-marble-otter.trycloudflare.com     80      30s
@@ -35,9 +33,7 @@ demo-nginx   quicktunnel   *       quiet-marble-otter.trycloudflare.com     80  
 $ curl https://quiet-marble-otter.trycloudflare.com
 ```
 
-远程/云集群：把镜像推到 registry，helm install 时追加
-`--set image.repository=<registry>/<镜像> --set image.tag=<tag>`，
-详见教程。
+镜像是多架构的（linux/amd64 + linux/arm64），可匿名从 GHCR 拉取，远程和云集群同样开箱即用。
 
 ## 工作原理
 
@@ -68,27 +64,32 @@ $ curl https://quiet-marble-otter.trycloudflare.com
 ### Helm（推荐）
 
 ```console
-$ make docker-build && minikube image load cloudflare-quick-tunnel-operator:dev   # 或推到 registry
-$ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
+# 从已发布的 OCI chart 安装——不用 clone、不用构建：
+$ helm install cloudflare-quick-tunnel-operator \
+    oci://ghcr.io/inokinoki/charts/cloudflare-quick-tunnel-operator --version 0.1.0 \
     -n cloudflare-quick-tunnel-operator --create-namespace
 
-# 使用 registry 镜像：
+# 或从本地 checkout 安装（比如在改 chart 时）：
 $ helm install cloudflare-quick-tunnel-operator charts/cloudflare-quick-tunnel-operator \
-    -n cloudflare-quick-tunnel-operator --create-namespace \
-    --set image.repository=ghcr.io/<你的用户名>/cloudflare-quick-tunnel-operator \
-    --set image.tag=v0.1.0
+    -n cloudflare-quick-tunnel-operator --create-namespace
 ```
 
-Chart 包含 operator Deployment、RBAC（含 leader election 的 lease 权限）、`quicktunnel` IngressClass 和 GatewayClass，均可在 `charts/cloudflare-quick-tunnel-operator/values.yaml` 里开关调整。
+两种方式默认都使用已发布的 GHCR 镜像（多架构 amd64/arm64，tag 有
+`0.1.0` / `0.1` / `latest`）；只有跑自己的构建时才需要
+`--set image.repository=… --set image.tag=…`。Chart 包含 operator
+Deployment、RBAC（含 leader election 的 lease 权限）、`quicktunnel`
+IngressClass 和 GatewayClass，均可在 `charts/cloudflare-quick-tunnel-operator/values.yaml`
+里开关调整。
 
 ### 原始 manifest
 
 ```console
-$ make minikube-load          # docker build + minikube image load
-$ make deploy                 # kubectl apply -f deploy/install.yaml
+$ kubectl apply -f deploy/install.yaml    # 使用已发布的 GHCR 镜像
 ```
 
-与 chart 等价；minikube 用户没装独立 kubectl 可以 `KUBECTL="minikube kubectl --" make deploy`。从 manifest 迁移到 Helm？先删掉已创建的 IngressClass/GatewayClass——Helm 拒绝收编不属于它的存量资源。
+想跑本地构建的镜像：`make minikube-load`，然后把 Deployment 的镜像指到
+`cloudflare-quick-tunnel-operator:dev`。从 manifest 迁移到 Helm？先删掉已创建的
+IngressClass/GatewayClass——Helm 拒绝收编不属于它的存量资源。
 
 ### 本地开发模式
 
@@ -256,8 +257,8 @@ $ make vet
 - [x] Gateway API 支持（`gatewayClassName: quicktunnel`，HTTPRoute = 隧道，Gateway.status.addresses 聚合 URL）
 - [x] Ingress 支持（`ingressClassName: quicktunnel`，按 host 拆分多隧道，status.loadBalancer 聚合 URL）
 - [x] Helm chart
+- [x] 通过 CI 把镜像和 Helm chart 发布到公共 registry（GHCR / OCI）
 - [ ] operator 自身 metrics（暴露中的隧道数、URL 更新计数）
-- [ ] 通过 CI 把镜像和 Helm chart 发布到公共 registry（GHCR / OCI）
 
 ## License
 
