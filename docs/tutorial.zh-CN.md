@@ -22,10 +22,10 @@
 
 ## 1. 安装
 
-### 方式 A：集群内部署（正式用法）
+### 方式 A：集群内部署（原始 manifest）
 
 ```console
-$ git clone <repo> && cd cloudflare-quick-tunnel-operator
+$ git clone https://github.com/Inokinoki/cloudflare-quick-tunnel-operator.git && cd cloudflare-quick-tunnel-operator
 
 # 构建镜像（或 docker buildx 指定多架构）
 $ make docker-build                          # → cloudflare-quick-tunnel-operator:dev
@@ -46,7 +46,7 @@ $ kubectl -n cloudflare-quick-tunnel-operator wait deploy/cloudflare-quick-tunne
 
 minikube 用户如果没装独立 kubectl，可以 `KUBECTL="minikube kubectl --" make deploy`。
 
-### 方式 C：Helm
+### 方式 B：Helm（推荐）
 
 ```console
 # 先构建镜像（尚无公开镜像），加载进集群或推到 registry：
@@ -66,7 +66,7 @@ Chart 包含 operator Deployment、RBAC（含 leader election 的 lease 权限�
 
 > 从 `deploy/install.yaml` 迁移到 Helm？先删除已创建的 `IngressClass quicktunnel` / `GatewayClass quicktunnel`——Helm 拒绝收编不属于它的存量资源。
 
-### 1.1 远程/云集群安装（需要推镜像到 registry）
+### 远程/云集群安装（需要推镜像到 registry）
 
 远程集群没法 side-load 镜像，把构建好的镜像推到集群能拉取的 registry（Docker Hub / GHCR / 私有 registry），然后改一下 `deploy/install.yaml` 里的 `image:` 即可：
 
@@ -99,9 +99,9 @@ $ kubectl -n cloudflare-quick-tunnel-operator patch deploy cloudflare-quick-tunn
 
 > 说明：operator 的隧道探活走 API server 的 `pods/proxy` 子资源（RBAC 已含在 install.yaml），标准发行版集群（kubeadm/EKS/GKE/ACK/TKE 等）都支持。若你的平台限制该子资源，日志会持续出现 `tunnel wedged, recycling tunnel pod`，这是已知边界。
 
-不想在远程集群装任何东西也可以：用[本地开发模式](#方式-b本地开发模式免打镜像推荐先体验)把 `KUBECONFIG` 指向远程集群，operator 跑在本机、隧道 Pod 跑在集群里，效果等同（前提是 kubeconfig 身份具备 install.yaml 中 ClusterRole 的权限，云集群的管理员 kubeconfig 天然满足）。
+不想在远程集群装任何东西也可以：用本地开发模式（见下文方式 C）把 `KUBECONFIG` 指向远程集群，operator 跑在本机、隧道 Pod 跑在集群里，效果等同（前提是 kubeconfig 身份具备 install.yaml 中 ClusterRole 的权限，云集群的管理员 kubeconfig 天然满足）。
 
-### 方式 B：本地开发模式（免打镜像，推荐先体验）
+### 方式 C：本地开发模式（免打镜像）
 
 operator 直接跑在你本机上，通过 kubeconfig 连集群：
 

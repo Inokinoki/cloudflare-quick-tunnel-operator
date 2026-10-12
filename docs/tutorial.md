@@ -22,10 +22,10 @@ The cluster does **not** need a public IP or any open inbound ports — quick tu
 
 ## 1. Installation
 
-### Option A: in-cluster deployment (production use)
+### Option A: in-cluster deployment (raw manifest)
 
 ```console
-$ git clone <repo> && cd cloudflare-quick-tunnel-operator
+$ git clone https://github.com/Inokinoki/cloudflare-quick-tunnel-operator.git && cd cloudflare-quick-tunnel-operator
 
 # Build the image (use docker buildx for multi-arch)
 $ make docker-build                          # → cloudflare-quick-tunnel-operator:dev
@@ -46,7 +46,7 @@ $ kubectl -n cloudflare-quick-tunnel-operator wait deploy/cloudflare-quick-tunne
 
 minikube users without a standalone kubectl can use `KUBECTL="minikube kubectl --" make deploy`.
 
-### Option C: Helm
+### Option B: Helm (recommended)
 
 ```console
 # Build the image first (no public image is published yet), then load it
@@ -72,7 +72,7 @@ Uninstall: `helm uninstall cloudflare-quick-tunnel-operator -n cloudflare-quick-
 > `IngressClass quicktunnel` / `GatewayClass quicktunnel` first — Helm
 > refuses to adopt resources it does not own.
 
-### 1.1 Remote / cloud clusters (push the image to a registry)
+### Remote / cloud clusters (push the image to a registry)
 
 Remote clusters cannot side-load images. Push the built image to a registry the cluster can pull from (Docker Hub / GHCR / private), then point `deploy/install.yaml`'s `image:` at it:
 
@@ -105,9 +105,9 @@ $ kubectl -n cloudflare-quick-tunnel-operator patch deploy cloudflare-quick-tunn
 
 > Note: the operator's tunnel health probe goes through the API server's `pods/proxy` subresource (RBAC included in install.yaml). Standard clusters (kubeadm/EKS/GKE/ACK/TKE/…) support it. If your platform restricts that subresource, you will see repeated `tunnel wedged, recycling tunnel pod` log lines — a known boundary.
 
-If you'd rather install nothing in the remote cluster, use [local dev mode](#option-b-local-dev-mode-no-image-needed-recommended-for-a-first-try) with `KUBECONFIG` pointing at the remote cluster: the operator runs on your machine while the tunnel pods run in the cluster (the kubeconfig identity needs the permissions of the ClusterRole in install.yaml; cloud admin kubeconfigs qualify out of the box).
+If you'd rather install nothing in the remote cluster, use local dev mode (Option C below) with `KUBECONFIG` pointing at the remote cluster: the operator runs on your machine while the tunnel pods run in the cluster (the kubeconfig identity needs the permissions of the ClusterRole in install.yaml; cloud admin kubeconfigs qualify out of the box).
 
-### Option B: local dev mode (no image needed — recommended for a first try)
+### Option C: local dev mode (no image needed)
 
 The operator runs on your machine and talks to the cluster via kubeconfig:
 

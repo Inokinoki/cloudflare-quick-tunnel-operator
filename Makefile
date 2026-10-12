@@ -1,5 +1,6 @@
 GO ?= $(shell command -v go 2>/dev/null || echo $(HOME)/go/bin/go)
 IMAGE ?= cloudflare-quick-tunnel-operator:dev
+CLOUDFLARED_IMAGE ?= cloudflare/cloudflared:2026.10.0
 KUBECTL ?= kubectl
 
 .PHONY: tidy build test vet run docker-build minikube-load deploy demo clean

@@ -9,9 +9,10 @@ The operator is ready when:
 Expose a Service with a single annotation:
   kubectl annotate svc my-svc quicktunnel.dev/expose=true
   kubectl get svc my-svc -o jsonpath='{.metadata.annotations.quicktunnel\.dev/url}'
+  (full example: examples/demo.yaml)
 
 Ingress mode (one tunnel per host; IngressClass "{{ .Values.ingressClass.name }}"{{ if not .Values.ingressClass.create }} is NOT installed by this release{{ end }}):
-  kubectl apply -f https://raw.githubusercontent.com/Inokinoki/cloudflare-quick-tunnel-operator/main/examples/demo.yaml
+  kubectl apply -f https://raw.githubusercontent.com/Inokinoki/cloudflare-quick-tunnel-operator/main/examples/ingress-hostless.yaml
 
 Gateway API mode (GatewayClass "{{ .Values.gatewayClass.name }}"{{ if not .Values.gatewayClass.create }} is NOT installed by this release{{ end }}) needs the CRDs first:
   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
